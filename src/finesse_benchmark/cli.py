@@ -265,7 +265,7 @@ models:
   # Used only in merger_mode
   merger:
     # Hugging Face model name or local path for Sequence Merger
-    name: "enzoescipy/sequence-merger-tiny"
+    name: "enzoescipy/sequence-merger-malgeum"
   # merger_mode: base embedder for probes, native_mode: the main long-context embedder
   base_embedder:
     # e.g., multilingual-e5-base for merger, or longformer-base-4096 for native

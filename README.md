@@ -1,5 +1,8 @@
 # Finesse Benchmark: Evaluating Long-Context Embedders with Semantic Precision
 
+(Github)[https://github.com/enzoescipy/finesse-benchmark]
+(pypi)[https://pypi.org/project/finesse-benchmark/]
+
 ## Introduction
 
 The **Finesse Benchmark** is a sophisticated evaluation framework designed to assess the performance of long-context embedding models on semantic understanding and information retention. Unlike traditional benchmarks that rely on superficial metrics, Finesse focuses on **Relative Semantic Similarity (RSS)**—a robust metric that measures how well models distinguish between relevant ("memory") and irrelevant ("noise") chunks in long sequences.
