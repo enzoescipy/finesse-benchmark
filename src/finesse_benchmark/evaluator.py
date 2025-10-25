@@ -189,13 +189,17 @@ class FinesseEvaluator:
                 }
 
         return {
-            'length_results': length_results
+            'config': self.config.model_dump(),
+            'raw_results': {
+                'length_results': length_results
+            }
         }
 
     def run(self) -> Dict[str, Any]:
         """Finesse 벤치마크 실행: Full mode with scoring (calls raw_run and computes scores)"""
         raw_data = self.raw_run()
-        length_results = raw_data['length_results']
+        raw_results = raw_data['raw_results']
+        length_results = raw_results['length_results']
         scored_results = {}
         final_scores_per_length = {}
         for target_length, raw in length_results.items():

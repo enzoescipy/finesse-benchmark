@@ -54,15 +54,15 @@ def generate_raw_data(
 
     # Run raw evaluation
     typer.echo("Generating raw embeddings...")
-    raw_results = evaluator.raw_run()
+    raw_data = evaluator.raw_run()
     
-    # Save raw embeddings to .pt file
+    # Save full raw data (config + raw_results) to .pt file
     dataset_name = config.dataset.path.split('/')[-1]
     save_path = os.path.join(output_dir, f"embeddings_{config.mode}_{dataset_name}.pt")
-    torch.save(raw_results, save_path)
+    torch.save(raw_data, save_path)
     
-    typer.echo(f"Raw embeddings saved to {save_path}")
-    length_results = raw_results.get('length_results', {})
+    typer.echo(f"Raw data (with config) saved to {save_path}")
+    length_results = raw_data['raw_results'].get('length_results', {})
     num_lengths = len(length_results)
     typer.echo(f"Processed {num_lengths} sequence lengths with raw probe and synthesis embeddings.")
 
@@ -78,9 +78,11 @@ def score_embeddings(
         typer.echo(f"Error: Input .pt file not found: {input_pt_path}")
         raise typer.Exit(code=1)
     
-    # Load raw data
+    # Load full raw data
     raw_data = torch.load(input_pt_path)
-    length_results = raw_data.get('length_results', {})
+    config_dict = raw_data['config']
+    raw_results = raw_data['raw_results']
+    length_results = raw_results.get('length_results', {})
     
     if not length_results:
         typer.echo("Error: No length results found in .pt file.")
@@ -100,6 +102,7 @@ def score_embeddings(
             avg_bu = bu_scores['bottom_up_coherence']
             imbalance = abs(avg_td - avg_bu)
             final_score = ((avg_td + avg_bu) / 2) - imbalance
+            final_score *= 500
             final_scores_per_length[target_length] = final_score
         else:
             final_scores_per_length[target_length] = 0.0
@@ -107,8 +110,9 @@ def score_embeddings(
     # Average RSS
     avg_rss = np.mean(list(final_scores_per_length.values()))
     
-    # Prepare results
+    # Prepare results with config
     results = {
+        'config': config_dict,
         'average_rss': avg_rss,
         'length_scores': final_scores_per_length
     }
