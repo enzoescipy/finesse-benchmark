@@ -197,7 +197,7 @@ class FinesseEvaluator:
                         src = torch.stack(partial_embs).unsqueeze(0).to(self.device)  # (1, i, D)
                         with torch.no_grad():
                             # Assume merger takes src embeddings; adjust if needs token inputs
-                            outputs = merger(src.float())
+                            outputs = merger(src)
                             if hasattr(outputs, 'pooler_output'):
                                 synth_emb = outputs.pooler_output.squeeze(0)
                             elif hasattr(outputs, 'last_hidden_state'):
