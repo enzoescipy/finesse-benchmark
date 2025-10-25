@@ -194,7 +194,7 @@ class FinesseEvaluator:
                     partial_embs = probe_embeddings[:i]
                     if self.config.mode == 'merger_mode':
                         merger = self.models['merger'].to(self.device).eval()
-                        src = torch.stack(partial_embs).unsqueeze(0)  # (1, i, D)
+                        src = torch.stack(partial_embs).unsqueeze(0).to(self.device)  # (1, i, D)
                         with torch.no_grad():
                             # Assume merger takes src embeddings; adjust if needs token inputs
                             outputs = merger(src.float())
@@ -206,7 +206,7 @@ class FinesseEvaluator:
                                 synth_emb = outputs.squeeze(0)
                         synth_emb = synth_emb.cpu().to(torch.float32)
                     else:  # native_mode
-                        synth_emb = torch.stack(partial_embs).mean(dim=0)
+                        synth_emb = torch.stack(partial_embs).to(self.device).mean(dim=0).cpu().to(torch.float32)
                     synthesis_embeddings.append(synth_emb)
                 
                 num_synth_steps = len(synthesis_embeddings)
