@@ -5,6 +5,8 @@ from typing import Optional
 import typer
 import torch
 import numpy as np
+import click
+from .utils import get_content_hash, get_model_hash
 
 from .config import BenchmarkConfig
 from .evaluator import FinesseEvaluator
@@ -67,18 +69,18 @@ def generate_raw_data(
 
 @app.command("score")
 def score_embeddings(
-    input_pt_path: str = typer.Argument(..., help="Path to raw embeddings .pt file"),
+    pt_path: str = typer.Option(..., "--pt-path", help="Path to the raw .pt data file from the generate command"),
     output_dir: str = typer.Option("results", "--output", help="Directory to save scored results"),
 ):
     """
     Compute scores from raw embeddings data.
     """
-    if not os.path.exists(input_pt_path):
-        typer.echo(f"Error: Input .pt file not found: {input_pt_path}")
+    if not os.path.exists(pt_path):
+        typer.echo(f"Error: Input .pt file not found: {pt_path}")
         raise typer.Exit(code=1)
     
     # Load full raw data
-    raw_data = torch.load(input_pt_path)
+    raw_data = torch.load(pt_path)
     config_dict = raw_data['config']
     raw_results = raw_data['raw_results']
     length_results = raw_results.get('length_results', {})
@@ -109,23 +111,94 @@ def score_embeddings(
     # Average RSS
     avg_rss = np.mean(list(final_scores_per_length.values()))
     
-    # Prepare results with config
-    results = {
-        'config': config_dict,
-        'average_rss': avg_rss,
-        'length_scores': final_scores_per_length
+    # Round scores for precision control (get_content_hash will convert to str)
+    avg_rss = round(avg_rss, 6)
+    rounded_length_scores = {
+        length: round(score, 6)
+        for length, score in final_scores_per_length.items()
     }
     
-    # Create output dir
+    # Prepare base results without hash
+    base_results = {
+        'config': config_dict,
+        'average_rss': avg_rss,
+        'length_scores': rounded_length_scores
+    }
+    
+    # Compute model hash for notarization (before content_hash)
+    try:
+        config = BenchmarkConfig.model_validate(config_dict)
+        if config.mode == 'merger_mode':
+            model_path = config.models.merger.name
+        else:
+            model_path = config.models.native_embedder.name
+        model_hash = get_model_hash(model_path)
+        base_results['model_hash'] = model_hash
+        typer.echo(f"Model hash computed: {model_hash[:16]}... (for notarization)")
+    except Exception as e:
+        typer.echo(f"Warning: Could not compute model hash: {e}")
+        base_results['model_hash'] = None
+    
+    # Create output dir before hashing to ensure debug path exists
     os.makedirs(output_dir, exist_ok=True)
+    
+    # Create copy for hashing with fixed frame ('content_hash': '')
+    hash_data = base_results.copy()
+    hash_data['content_hash'] = ''
+    
+    # Compute content hash on the fixed frame with debug
+    content_hash = get_content_hash(hash_data, debug_file_path='results/stored_canonical.txt')
+    
+    # Add the hash to final results
+    results = base_results.copy()
+    results['content_hash'] = content_hash
     
     # Save to JSON
     output_path = os.path.join(output_dir, "benchmark_results.json")
-    with open(output_path, "w") as f:
+    with open(output_path, "w", encoding='utf-8', newline='') as f:
         json.dump(results, f, indent=2)
     
     typer.echo(f"Scored results saved to {output_path}")
-    typer.echo(f"Average RSS: {avg_rss:.4f}")
+    typer.echo(f"Average RSS: {avg_rss}")
+
+@app.command("checksum")
+def verify_integrity(json_path: str = typer.Option(..., "--json-path", help="Path to the results JSON file to verify")):
+    """
+    Verify the integrity of a results.json file using its self-contained content hash.
+    """
+    if not os.path.exists(json_path):
+        typer.echo(f"❌ Error: File not found: {json_path}")
+        raise typer.Exit(code=1)
+    
+    import json  # Ensure json is imported
+    
+    # Read original text
+    with open(json_path, "r", encoding='utf-8', newline='') as f:
+        original_text = f.read()
+    
+    # Load data
+    data = json.loads(original_text)
+    
+    if 'content_hash' not in data:
+        typer.echo("❌ Error: No 'content_hash' found in the file. This file is not notarized.")
+        raise typer.Exit(code=1)
+    
+    stored_hash = data['content_hash']
+    
+    # Create copy and set fixed frame for recomputation
+    verify_data = data.copy()
+    verify_data['content_hash'] = ''
+    recomputed_hash = get_content_hash(verify_data, debug_file_path='results/recomputed_canonical.txt')
+    
+    if recomputed_hash == stored_hash:
+        click.echo("✅ Verification SUCCESS")
+        click.echo(f"Stored: {stored_hash}")
+        click.echo(f"Recomputed: {recomputed_hash}")
+    else:
+        click.echo("❌ Verification FAILED")
+        click.echo(f"Stored: {stored_hash}")
+        click.echo(f"Recomputed: {recomputed_hash}")
+        raise typer.Exit(code=1)
 
 @app.command("init")
 def init_config(output_path: str = typer.Option("benchmark.yaml", "--output", help="Path to save the config file")):
