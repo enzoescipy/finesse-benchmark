@@ -17,7 +17,7 @@ transformers = "^4.57.1"
 matplotlib = "^3.10.7"
 seaborn = "^0.13.2"
 typer = "^0.20.0"
-
+litellm ="^1.78.7"
 
 [tool.poetry.scripts]
 finesse = "finesse_benchmark.cli:app"

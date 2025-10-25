@@ -147,7 +147,8 @@ def score_embeddings(
     hash_data['content_hash'] = ''
     
     # Compute content hash on the fixed frame with debug
-    content_hash = get_content_hash(hash_data, debug_file_path='results/stored_canonical.txt')
+    content_hash = get_content_hash(hash_data)
+    # content_hash = get_content_hash(hash_data, debug_file_path='results/stored_canonical.txt')
     
     # Add the hash to final results
     results = base_results.copy()
@@ -162,13 +163,35 @@ def score_embeddings(
     typer.echo(f"Average RSS: {avg_rss}")
 
 @app.command("checksum")
-def verify_integrity(json_path: str = typer.Option(..., "--json-path", help="Path to the results JSON file to verify")):
+def verify_integrity(
+    json_path: str = typer.Option(..., "--json-path", help="Path to the results JSON file to verify"),
+    model_path: Optional[str] = typer.Option(None, "--model-path", help="Path to the original model file for full provenance check"),
+):
     """
     Verify the integrity of a results.json file using its self-contained content hash.
+    If --model-path is provided, also verifies the model provenance by comparing the stored model_hash with the hash of the given model file.
     """
     if not os.path.exists(json_path):
         typer.echo(f"❌ Error: File not found: {json_path}")
         raise typer.Exit(code=1)
+    
+    # Validate model_path if provided
+    if model_path:
+        # Enforce that model_path must be a Hugging Face model ID.
+        is_likely_local_path = (
+            os.path.isabs(model_path) or
+            '\\' in model_path or
+            model_path.startswith('./') or
+            model_path.startswith('../') or
+            # A simple check for file extensions like .pt or .bin
+            ( '.' in os.path.basename(model_path) and model_path.count('/') == 0 ) or
+            # More than one slash is likely a deep local path, not 'org/repo'
+            (model_path.count('/') > 1)
+        )
+
+        if is_likely_local_path:
+             click.echo("❌ Model Provenance FAILED: Only Hugging Face model IDs (e.g., 'org/repo') are accepted. Local file paths are not allowed.")
+             raise typer.Exit(code=1)
     
     import json  # Ensure json is imported
     
@@ -188,16 +211,41 @@ def verify_integrity(json_path: str = typer.Option(..., "--json-path", help="Pat
     # Create copy and set fixed frame for recomputation
     verify_data = data.copy()
     verify_data['content_hash'] = ''
-    recomputed_hash = get_content_hash(verify_data, debug_file_path='results/recomputed_canonical.txt')
+    recomputed_hash = get_content_hash(verify_data)
+    # recomputed_hash = get_content_hash(verify_data, debug_file_path='results/recomputed_canonical.txt')
     
     if recomputed_hash == stored_hash:
-        click.echo("✅ Verification SUCCESS")
-        click.echo(f"Stored: {stored_hash}")
-        click.echo(f"Recomputed: {recomputed_hash}")
+        click.echo("✅ Content Verification SUCCESS")
+        click.echo(f"Stored Content Hash: {stored_hash}")
+        click.echo(f"Recomputed Content Hash: {recomputed_hash}")
+        
+        # If model_path provided, perform model provenance check
+        if model_path:
+            if 'model_hash' not in data or data['model_hash'] is None:
+                click.echo("❌ Model Provenance FAILED: No 'model_hash' in results.")
+                raise typer.Exit(code=1)
+            
+            stored_model_hash = data['model_hash']
+            try:
+                computed_model_hash = get_model_hash(model_path)
+                if computed_model_hash == stored_model_hash:
+                    click.echo("✅ Model Provenance SUCCESS")
+                    click.echo(f"Stored Model Hash: {stored_model_hash}")
+                    click.echo(f"Computed Model Hash: {computed_model_hash}")
+                else:
+                    click.echo("❌ Model Provenance FAILED")
+                    click.echo(f"Stored Model Hash: {stored_model_hash}")
+                    click.echo(f"Computed Model Hash: {computed_model_hash}")
+                    raise typer.Exit(code=1)
+            except Exception as e:
+                click.echo(f"❌ Model Provenance ERROR: {e}")
+                raise typer.Exit(code=1)
+        else:
+            click.echo("ℹ️ Run with --model-path for full provenance verification.")
     else:
-        click.echo("❌ Verification FAILED")
-        click.echo(f"Stored: {stored_hash}")
-        click.echo(f"Recomputed: {recomputed_hash}")
+        click.echo("❌ Content Verification FAILED")
+        click.echo(f"Stored Content Hash: {stored_hash}")
+        click.echo(f"Recomputed Content Hash: {recomputed_hash}")
         raise typer.Exit(code=1)
 
 @app.command("init")
@@ -210,7 +258,7 @@ def init_config(output_path: str = typer.Option("benchmark.yaml", "--output", he
 # For merger_mode: Use sequence-merger with a base embedder.
 # For native_mode: Use a long-context native embedder directly.
 
-mode: "merger_mode"  # Options: "merger_mode" or "native_mode"
+mode: "merger_mode"  # Options: "merger_mode", "native_mode", or "byok_mode"
 
 # Models Configuration
 models:
@@ -226,6 +274,29 @@ models:
   native_embedder:
     # e.g., "Snowflake/snowflake-arctic-embed-l-v2.0"
     name: "Snowflake/snowflake-arctic-embed-l-v2.0"
+
+  # [BYOK Mode Example - Uncomment and edit for BYOK usage]
+  # For byok_mode: Specify the API provider and model name for litellm
+  # byok_embedder:
+  #   provider: "openai"  # e.g., 'openai', 'cohere', 'google'
+  #   name: "text-embedding-3-large"  # Provider-specific model name
+  #
+  # IMPORTANT: API keys MUST be set as environment variables for security.
+  # Do NOT store keys in this YAML file or commit them to version control.
+  # Examples (set in your terminal before running):
+  #
+  # For OpenAI:
+  #   export OPENAI_API_KEY="sk-your-key-here"  # Linux/macOS
+  #   $env:OPENAI_API_KEY="sk-your-key-here"  # Windows PowerShell
+  #
+  # For Cohere:
+  #   export COHERE_API_KEY="your-cohere-key-here"
+  #
+  # For Google:
+  #   export GOOGLE_API_KEY="your-google-key-here"
+  #
+  # litellm will automatically detect and use the appropriate environment variable
+  # based on the 'provider' you specify. This ensures your keys remain secure.
 
 # Dataset Configuration
 dataset:

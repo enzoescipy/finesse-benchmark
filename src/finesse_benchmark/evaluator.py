@@ -3,6 +3,7 @@ import torch
 from datasets import load_dataset
 from transformers import AutoModel, AutoTokenizer
 import numpy as np
+import litellm
 
 from .config import BenchmarkConfig
 from .scoring import calculate_self_attestation_scores, calculate_self_attestation_scores_bottom_up
@@ -40,6 +41,14 @@ class FinesseEvaluator:
             # Load native long-context embedder
             load_embedder("native_embedder")
 
+        elif self.config.mode == "byok_mode":
+            # Load tokenizer for probe assembly using a default multilingual model
+            tokenizer_path = "intfloat/multilingual-e5-base"
+            self.models["probe_tokenizer"] = AutoTokenizer.from_pretrained(tokenizer_path)
+        
+        else:
+            raise ValueError(f"Unsupported mode: {self.config.mode}")
+
     def _load_embedder(self, model_path: str):
         """Load embedder model and tokenizer from HF path."""
         tokenizer = AutoTokenizer.from_pretrained(model_path)
@@ -52,30 +61,44 @@ class FinesseEvaluator:
         
         return tokenizer, model
 
-    def _get_embedding(self, text: str, embedder_key: str) -> torch.Tensor:
+    def _get_embedding(self, text: str, embedder_key: Optional[str] = None) -> torch.Tensor:
         """Get embedding for text using the specified embedder."""
-        embedder = self.models[embedder_key]
-        tokenizer = embedder["tokenizer"]
-        model = embedder["model"]
-        
-        # Prefix based on model (e.g., "passage: " for E5)
-        prefix = "passage: " if "e5" in embedder_key.lower() else ""
-        input_text = prefix + text
-        
-        inputs = tokenizer(
-            [input_text],
-            max_length=512,  # Adjust based on model
-            padding=True,
-            truncation=True,
-            return_tensors="pt"
-        ).to(self.device)
-        
-        with torch.no_grad():
-            outputs = model(**inputs)
-            embedding = outputs.last_hidden_state.mean(dim=1)  # Universal mean pooling for all AutoModels
-        
-        embedding = torch.nn.functional.normalize(embedding, p=2, dim=1).squeeze(0)
-        return embedding.cpu().to(torch.float32)
+        if self.config.mode == "byok_mode":
+            if self.config.models.byok_embedder is None:
+                raise ValueError("BYOK mode requires 'models.byok_embedder' configuration.")
+            provider = self.config.models.byok_embedder.provider
+            model_name = self.config.models.byok_embedder.name
+            litellm_model = f"{provider}/{model_name}"
+            response = litellm.embedding(model=litellm_model, input=[text])
+            embedding_list = response.data[0]['embedding']
+            embedding = torch.tensor(embedding_list, dtype=torch.float32)
+            embedding = torch.nn.functional.normalize(embedding.unsqueeze(0), p=2, dim=1).squeeze(0)
+            return embedding
+        else:
+            if embedder_key is None:
+                raise ValueError("Embedder key required for local embedding modes")
+            embedder = self.models[embedder_key]
+            tokenizer = embedder["tokenizer"]
+            model = embedder["model"]
+            
+            # Prefix based on model (e.g., "passage: " for E5)
+            prefix = "passage: " if "e5" in embedder_key.lower() else ""
+            input_text = prefix + text
+            
+            inputs = tokenizer(
+                [input_text],
+                max_length=512,  # Adjust based on model
+                padding=True,
+                truncation=True,
+                return_tensors="pt"
+            ).to(self.device)
+            
+            with torch.no_grad():
+                outputs = model(**inputs)
+                embedding = outputs.last_hidden_state.mean(dim=1)  # Universal mean pooling for all AutoModels
+            
+            embedding = torch.nn.functional.normalize(embedding, p=2, dim=1).squeeze(0)
+            return embedding.cpu().to(torch.float32)
 
     def raw_run(self) -> Dict[str, Any]:
         """Finesse 벤치마크 실행: Stratified CSAT with Single-Pass Conveyor Belt and Dynamic Token Countdown (Raw mode - embeddings only)"""
@@ -102,8 +125,10 @@ class FinesseEvaluator:
         if len(dataset) < total_needed_samples:
             raise ValueError(f"데이터셋 크기({len(dataset)})가 필요 샘플({total_needed_samples})보다 작음. 더 많은 데이터 필요.")
 
-        # Dynamically determine the embedder key based on mode
-        if self.config.mode == 'merger_mode':
+        # Dynamically determine the embedder key or None for BYOK
+        if self.config.mode == 'byok_mode':
+            embedder_key = None
+        elif self.config.mode == 'merger_mode':
             embedder_key = 'base_embedder'
         elif self.config.mode == 'native_mode':
             embedder_key = 'native_embedder'
@@ -111,7 +136,10 @@ class FinesseEvaluator:
             raise ValueError(f"Unsupported mode: {self.config.mode}")
 
         # Use the pre-loaded tokenizer for the correct embedder
-        tokenizer = self.models[embedder_key]["tokenizer"]
+        if self.config.mode == 'byok_mode':
+            tokenizer = self.models["probe_tokenizer"]
+        else:
+            tokenizer = self.models[embedder_key]["tokenizer"]
 
         length_results = {}  # 길이별 결과 저장
         for target_length in range(min_length, max_length + 1):
