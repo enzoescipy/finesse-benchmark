@@ -1,7 +1,7 @@
 # Finesse Benchmark: Evaluating Long-Context Embedders with Semantic Precision
 
-(Github)[https://github.com/enzoescipy/finesse-benchmark]
-(pypi)[https://pypi.org/project/finesse-benchmark/]
+[Github](https://github.com/enzoescipy/finesse-benchmark)
+[pypi](https://pypi.org/project/finesse-benchmark/)
 
 ## Introduction
 
