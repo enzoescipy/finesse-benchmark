@@ -198,7 +198,9 @@ class FinesseEvaluator:
                         with torch.no_grad():
                             # Assume merger takes src embeddings; adjust if needs token inputs
                             outputs = merger(src.float())
-                            if hasattr(outputs, 'last_hidden_state'):
+                            if hasattr(outputs, 'pooler_output'):
+                                synth_emb = outputs.pooler_output.squeeze(0)
+                            elif hasattr(outputs, 'last_hidden_state'):
                                 synth_emb = outputs.last_hidden_state.squeeze(0).mean(dim=0)
                             else:
                                 synth_emb = outputs.squeeze(0)
