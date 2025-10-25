@@ -30,7 +30,7 @@ class FinesseEvaluator:
             self.models["merger"] = AutoModel.from_pretrained(
                 merger_name,
                 trust_remote_code=True,
-                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32
+                dtype=torch.float16 if torch.cuda.is_available() else torch.float32
             ).to(self.device).eval()
             
             # Load base embedder
@@ -47,7 +47,7 @@ class FinesseEvaluator:
         model = AutoModel.from_pretrained(
             model_path,
             trust_remote_code=True,
-            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32
+            dtype=torch.float16 if torch.cuda.is_available() else torch.float32
         ).to(self.device).eval()
         
         return tokenizer, model
@@ -87,6 +87,10 @@ class FinesseEvaluator:
             path=self.config.dataset.path,
             split=self.config.dataset.split
         )
+
+        # Shuffle dataset deterministically for reproducibility
+        if self.config.seed is not None:
+            dataset = dataset.shuffle(seed=self.config.seed)
 
         if self.config.dataset.num_samples:
             dataset = dataset.select(range(self.config.dataset.num_samples))

@@ -14,36 +14,35 @@ app = typer.Typer(no_args_is_help=True)
 
 @app.command("generate")
 def generate_raw_data(
-    config_path: Optional[str] = typer.Option(None, "--config", help="Path to benchmark.yaml config file"),
+    config_path: str = typer.Option(..., "--config", help="Path to benchmark.yaml config file"),
     dataset_path: Optional[str] = typer.Option(None, help="Override HF dataset path"),
     output_dir: str = typer.Option("results", "--output", help="Directory to save raw embedding data"),
-    num_samples: Optional[int] = typer.Option(None, "--samples", help="Number of samples to process"),
+    num_samples: Optional[int] = typer.Option(None, "--samples", help="Number of samples per sequence length"),
+    num_seed: Optional[int] = typer.Option(None, "--seed", help="Random seed for dataset shuffling reproducibility"),
 ):
     """
     Generate raw embeddings from the Finesse benchmark dataset.
     """
     # Load config
-    if config_path:
-        if not os.path.exists(config_path):
-            typer.echo(f"Error: Config file not found: {config_path}")
-            raise typer.Exit(code=1)
-        with open(config_path, "r") as f:
-            yaml_data = yaml.safe_load(f)
-        try:
-            config = BenchmarkConfig.model_validate(yaml_data)
-            typer.echo(f"Loaded config from {config_path}")
-        except Exception as e:
-            typer.echo(f"Error validating config: {e}")
-            raise typer.Exit(code=1)
-    else:
-        config = BenchmarkConfig()  # Default config
-        typer.echo("Using default config")
+    if not os.path.exists(config_path):
+        typer.echo(f"Error: Config file not found: {config_path}")
+        raise typer.Exit(code=1)
+    with open(config_path, "r") as f:
+        yaml_data = yaml.safe_load(f)
+    try:
+        config = BenchmarkConfig.model_validate(yaml_data)
+        typer.echo(f"Loaded config from {config_path}")
+    except Exception as e:
+        typer.echo(f"Error validating config: {e}")
+        raise typer.Exit(code=1)
     
     # Override if provided
     if dataset_path:
         config.dataset.path = dataset_path
     if num_samples:
-        config.dataset.num_samples = num_samples
+        config.probe_config.samples_per_length = num_samples
+    if num_seed:
+        config.seed = num_seed
     
     # Create output dir
     os.makedirs(output_dir, exist_ok=True)
@@ -127,6 +126,72 @@ def score_embeddings(
     
     typer.echo(f"Scored results saved to {output_path}")
     typer.echo(f"Average RSS: {avg_rss:.4f}")
+
+@app.command("init")
+def init_config(output_path: str = typer.Option("benchmark.yaml", "--output", help="Path to save the config file")):
+    """
+    Generate a default benchmark.yaml template with comments.
+    """
+    template = '''# Finesse Benchmark Configuration
+# This file configures the benchmark modes, models, probe settings, etc.
+# For merger_mode: Use sequence-merger with a base embedder.
+# For native_mode: Use a long-context native embedder directly.
+
+mode: "merger_mode"  # Options: "merger_mode" or "native_mode"
+
+# Models Configuration
+models:
+  # Used only in merger_mode
+  merger:
+    # Hugging Face model name or local path for Sequence Merger
+    name: "enzoescipy/sequence-merger-tiny"
+  # merger_mode: base embedder for probes, native_mode: the main long-context embedder
+  base_embedder:
+    # e.g., multilingual-e5-base for merger, or longformer-base-4096 for native
+    name: "intfloat/multilingual-e5-base"
+  # Used only in native_mode (if separate)
+  native_embedder:
+    # e.g., "Snowflake/snowflake-arctic-embed-l-v2.0"
+    name: "Snowflake/snowflake-arctic-embed-l-v2.0"
+
+# Dataset Configuration
+dataset:
+  path: "enzoescipy/finesse-benchmark-database"  # HF dataset path
+  split: "train"  # Split to use
+
+# Probe Configuration
+probe_config:
+  mask_ratio: 0.15  # Token masking ratio for probes
+  sequence_length:
+    min: 5  # Minimum sequence length in tokens
+    max: 16  # Maximum sequence length in tokens
+  samples_per_length: 1  # Evaluations per length
+
+# Advanced Settings
+advanced: {}
+  # batch_size: 8
+  # device: "cuda"
+
+# Seed for Reproducibility
+seed: 42  # Default seed for dataset shuffling
+'''
+
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write(template)
+
+    # Self-validate the generated config
+    try:
+        with open(output_path, "r", encoding='utf-8') as f:
+            yaml_data = yaml.safe_load(f)
+        config = BenchmarkConfig.model_validate(yaml_data)
+        typer.echo(f"Default benchmark.yaml generated at: {output_path}")
+        typer.echo("YAML template validated successfully with BenchmarkConfig.")
+        typer.echo("Edit the file to customize models, modes, and settings.")
+    except Exception as e:
+        typer.echo(f"Error: Generated YAML is invalid - {e}")
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        raise typer.Exit(code=1)
 
 if __name__ == "__main__":
     app()

@@ -46,6 +46,7 @@ class BenchmarkConfig(BaseModel):
     output: OutputConfig = Field(default_factory=OutputConfig)
     byok: Dict[str, str] = Field(default_factory=dict, description="API 키 등")
     advanced: Dict[str, Any] = Field(default_factory=dict, description="고급 옵션 (batch_size, device 등)")
+    seed: Optional[int] = Field(default=42, description="Random seed for reproducibility")
 
     class Config:
         json_schema_extra = {"example": {
