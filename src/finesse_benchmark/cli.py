@@ -559,14 +559,13 @@ def inspect(
 
     plot_paths = []
     loaded_data = torch.load(pt_path)
+    
+    # Extract length_results from the new data structure
     if 'raw_results' in loaded_data:
-        # raw_results가 있으면 그 안으로 들어감
         raw_results_data = loaded_data['raw_results']
     else:
-        # 없으면 로드된 데이터 자체를 사용
         raw_results_data = loaded_data
 
-    # 'raw_results' 안에 'length_results'가 한 겹 더 있음
     if 'length_results' in raw_results_data:
         length_results = raw_results_data['length_results']
     else:
@@ -574,15 +573,16 @@ def inspect(
 
     try:
         if all_flag:
+            # Inspect all available lengths
             available_lengths = []
             for key in length_results:
-                # 키가 숫자인지 먼저 확인
                 if str(key).isdigit():
                     avail_len = int(key)
                     length_data = length_results[key]
-                    # 필요한 키가 모두 있는지 확인
-                    if 'probe_embeddings' in length_data and 'synthesis_embeddings' in length_data:
+                    # Check for the new sample_results structure
+                    if 'sample_results' in length_data:
                         available_lengths.append(avail_len)
+            
             available_lengths.sort()
             typer.echo(f"Inspecting all lengths: {available_lengths}")
 
@@ -590,52 +590,52 @@ def inspect(
                 typer.echo("No valid length data found.")
                 return
 
-
             for avail_len in available_lengths:
-                raw = length_results[avail_len]
+                length_data = length_results[str(avail_len)]
+                sample_results = length_data.get('sample_results', [])
                 
-                # --- 여기가 핵심: 어떠한 unbind도 없이 그대로 전달 ---
-                probe_embeddings = raw['probe_embeddings']
-                synthesis_embeddings = raw['synthesis_embeddings']
-                num_synth_steps = raw['num_synth_steps']
+                if not sample_results:
+                    typer.echo(f"Warning: No samples found for length {avail_len}. Skipping.")
+                    continue
                 
+                # Simply pass the raw sample_results to the new inspect function
                 filename = generate_heatmap_for_length(
-                    synthesis_embeddings,
-                    probe_embeddings,
-                    num_synth_steps,
-                    avail_len,
-                    mode,
-                    output_dir
+                    sample_results=sample_results,
+                    length=avail_len,
+                    mode=mode,
+                    output_dir=output_dir,
+                    num_samples=len(sample_results)
                 )
                 plot_paths.append(filename)
+                typer.echo(f"Generated heatmap for length {avail_len} with mode {mode}")
 
         else:
-            # 단일 길이에 대한 처리
+            # Inspect specific length
+            if length is None:
+                typer.echo("Error: Please specify --all or a specific --length.")
+                raise typer.Exit(code=1)
+                
             length_data = length_results.get(str(length), length_results.get(length))
-            if not length_data or 'probe_embeddings' not in length_data or 'synthesis_embeddings' not in length_data:
+            if not length_data or 'sample_results' not in length_data:
                 raise ValueError(f"Invalid or missing data for length {length} in .pt file.")
             
+            sample_results = length_data['sample_results']
+            if not sample_results:
+                typer.echo(f"Warning: No samples found for length {length}.")
+                return
+            
             typer.echo(f"Inspecting length: {length}")
-
-            # --- 여기도 핵심: 어떠한 unbind도 없이 그대로 전달 ---
-            probe_lists = length_data['probe_embeddings']
-            synth_lists = length_data['synthesis_embeddings']
-
-            if len(probe_lists) != len(synth_lists):
-                typer.echo(f"Warning: Mismatch for length {length}, using min.")
-                min_len = min(len(probe_lists), len(synth_lists))
-                probe_lists = probe_lists[:min_len]
-                synth_lists = synth_lists[:min_len]
-
+            
+            # Simply pass the raw sample_results to the new inspect function
             filename = generate_heatmap_for_length(
-                probe_lists,
-                synth_lists,
-                length,
-                mode,
-                output_dir
+                sample_results=sample_results,
+                length=length,
+                mode=mode,
+                output_dir=output_dir,
+                num_samples=len(sample_results)
             )
             plot_paths.append(filename)
-            typer.echo(f"Inspecting length: {length}")
+            typer.echo(f"Generated heatmap for length {length} with mode {mode}")
 
         typer.echo(f"Inspect plots saved to: {output_dir}")
         if plot_paths:

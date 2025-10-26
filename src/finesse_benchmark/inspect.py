@@ -1,103 +1,168 @@
 import os
 import torch
-import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import typer
 from typing import List, Dict
-
-from .scoring import calculate_self_attestation_scores
+from .scoring import calculate_self_attestation_scores, calculate_self_attestation_scores_bottom_up
 
 def generate_heatmap_for_length(
-    chunk_embeddings: List[torch.Tensor],
-    synth_embeddings: List[torch.Tensor],
-    num_synth_steps: int,
+    sample_results: List[Dict],
     length: int,
     mode: str,
-    output_dir: str = "inspect_plots"
-) -> str:
+    output_dir: str,
+    num_samples: int = 25
+):
     """
-    Generate and save a single heatmap for one length, using lists of per-sample embedding lists.
+    Generate cosine similarity heatmap visualizations from raw sample results.
     
     Args:
-        chunk_embeddings: List[torch.Tensor] - lists of probe embeddings.
-        synth_embeddings: List[torch.Tensor] - lists of synthesis embeddings.
-        length: The sequence length.
-        mode: One of 'average', 'stddev', 'worst', 'best'.
-        output_dir: Directory to save the plot.
-    
-    Returns:
-        Path to the saved plot file.
+        sample_results: List of sample dictionaries containing chunk_embeddings and synthesis_embeddings
+        length: Target sequence length
+        mode: 'average', 'best', 'worst', or 'stddev'
+        output_dir: Directory to save the plot
+        num_samples: Number of samples processed (for title)
     """
-    import os
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-    import numpy as np
-    import torch.nn.functional as F
-    from .scoring import calculate_self_attestation_scores, calculate_self_attestation_scores_bottom_up
-
-    os.makedirs(output_dir, exist_ok=True)
-    num_samples = len(chunk_embeddings)
-    if num_samples == 0:
-        raise ValueError(f"No samples for length {length}")
-
-    sim_matrices: List[np.ndarray] = []
-    scores: List[float] = []
     
-    # Stack embeddings
-    chunk_emb_tensor = torch.stack(chunk_embeddings)  # Shape: (M, d_model)
-    synth_emb_tensor = torch.stack(synth_embeddings)  # Shape: (N, d_model)
+    if not sample_results:
+        raise ValueError(f"No sample results found for length {length}")
     
-    # Compute similarity matrix: (N_synth, M_chunks)
-    sim_matrix = F.cosine_similarity(
-        synth_emb_tensor.unsqueeze(1),  # (N, 1, d)
-        chunk_emb_tensor.unsqueeze(0),  # (1, M, d)
-        dim=2
-    ).cpu().numpy()  # (N, M)
-    
-    sim_matrices.append(sim_matrix)
-    
-    # Compute proxy score
-    td_scores = calculate_self_attestation_scores(chunk_embeddings, synth_embeddings)
-    bu_scores = calculate_self_attestation_scores_bottom_up(chunk_embeddings, synth_embeddings, num_synth_steps)
-    avg_td = td_scores['contextual_coherence']
-    avg_bu = bu_scores['bottom_up_coherence']
-    imbalance = abs(avg_td - avg_bu)
-    final_score = ((avg_td + avg_bu) / 2) - imbalance
-    final_score *= 500
-    scores.append(final_score)
-    
-    # Aggregate based on mode
-    if mode == "average":
-        mat = np.mean(sim_matrices, axis=0)
-    elif mode == "stddev":
-        mat = np.std(sim_matrices, axis=0)
-    elif mode == "worst":
-        idx = np.argmin(scores)
-        mat = sim_matrices[idx]
-    elif mode == "best":
-        idx = np.argmax(scores)
-        mat = sim_matrices[idx]
+    # Mode processing logic - the artist now chooses their own materials
+    if mode == 'average':
+        # Average across all samples
+        all_chunk_embs = []
+        all_synth_embs = []
+        
+        for sample_dict in sample_results:
+            chunk_embs = sample_dict.get('chunk_embeddings', [])
+            synth_embs = sample_dict.get('synthesis_embeddings', [])
+            
+            if chunk_embs and synth_embs:
+                all_chunk_embs.append(torch.stack(chunk_embs))
+                all_synth_embs.append(torch.stack(synth_embs))
+        
+        if not all_chunk_embs:
+            raise ValueError(f"No valid embeddings found for length {length}")
+        
+        # Stack all samples and average
+        chunk_embeddings_3d = torch.stack(all_chunk_embs)  # (num_samples, N, D)
+        synth_embeddings_3d = torch.stack(all_synth_embs)  # (num_samples, N, D)
+        
+        chunk_embeddings = chunk_embeddings_3d.mean(dim=0)  # (N, D)
+        synth_embeddings = synth_embeddings_3d.mean(dim=0)  # (N, D)
+        
+        # Convert to list for compatibility with existing heatmap logic
+        chunk_embeddings_list = list(torch.unbind(chunk_embeddings, dim=0))
+        synth_embeddings_list = list(torch.unbind(synth_embeddings, dim=0))
+        
+    elif mode in ['best', 'worst']:
+        # Find the best/worst sample based on scoring
+        sample_scores = []
+        
+        for sample_dict in sample_results:
+            chunk_embs = sample_dict.get('chunk_embeddings', [])
+            synth_embs = sample_dict.get('synthesis_embeddings', [])
+            
+            if chunk_embs and synth_embs and len(chunk_embs) >= 2:
+                # Calculate scores using the new scoring functions
+                td_scores = calculate_self_attestation_scores(chunk_embs, synth_embs)
+                bu_scores = calculate_self_attestation_scores_bottom_up(chunk_embs, synth_embs)
+                
+                avg_td = td_scores['contextual_coherence']
+                avg_bu = bu_scores['bottom_up_coherence']
+                imbalance = abs(avg_td - avg_bu)
+                final_score = ((avg_td + avg_bu) / 2) - imbalance
+                sample_scores.append(final_score)
+            else:
+                # Use extreme values for invalid samples
+                sample_scores.append(-float('inf') if mode == 'best' else float('inf'))
+        
+        if not sample_scores:
+            raise ValueError(f"Could not calculate scores for length {length}")
+        
+        # Find target sample
+        target_idx = np.argmax(sample_scores) if mode == 'best' else np.argmin(sample_scores)
+        target_sample = sample_results[target_idx]
+        
+        chunk_embeddings_list = target_sample['chunk_embeddings']
+        synth_embeddings_list = target_sample['synthesis_embeddings']
+        
+    elif mode == 'stddev':
+        # Calculate standard deviation across samples
+        all_chunk_embs = []
+        all_synth_embs = []
+        
+        for sample_dict in sample_results:
+            chunk_embs = sample_dict.get('chunk_embeddings', [])
+            synth_embs = sample_dict.get('synthesis_embeddings', [])
+            
+            if chunk_embs and synth_embs:
+                all_chunk_embs.append(torch.stack(chunk_embs))
+                all_synth_embs.append(torch.stack(synth_embs))
+        
+        if not all_chunk_embs:
+            raise ValueError(f"No valid embeddings found for length {length}")
+        
+        # Stack all samples and calculate stddev
+        chunk_embeddings_3d = torch.stack(all_chunk_embs)  # (num_samples, N, D)
+        synth_embeddings_3d = torch.stack(all_synth_embs)  # (num_samples, N, D)
+        
+        chunk_embeddings = chunk_embeddings_3d.std(dim=0)  # (N, D)
+        synth_embeddings = synth_embeddings_3d.std(dim=0)  # (N, D)
+        
+        # Convert to list for compatibility with existing heatmap logic
+        chunk_embeddings_list = list(torch.unbind(chunk_embeddings, dim=0))
+        synth_embeddings_list = list(torch.unbind(synth_embeddings, dim=0))
+        
     else:
-        raise ValueError(f"Invalid mode: {mode}")
+        raise ValueError(f"Unsupported mode: {mode}")
     
-    # Plot heatmap
-    plt.figure(figsize=(12, 10))
-    sns.heatmap(
-        mat,
-        cmap='RdBu_r',
-        center=0,
-        annot=(mat.shape[0] < 10),
-        fmt='.3f',
-        square=True,
-        cbar_kws={'label': 'Cosine Similarity'}
-    )
-    plt.xlabel('Chunk Index (Left: Memory, Right: Noise)')
-    plt.ylabel('Synthesis Step Index')
-    plt.title(f"Similarity Matrix - Length: {length}, Mode: {mode} (Samples: {num_samples})")
-    filename = os.path.join(output_dir, f"heatmap_length_{length}_mode_{mode}.png")
-    plt.savefig(filename, dpi=300, bbox_inches='tight')
+    # Now generate the heatmap with the processed embeddings
+    num_chunks = len(chunk_embeddings_list)
+    num_synth_steps = len(synth_embeddings_list)
+    
+    # Create similarity matrices
+    probe_similarity = np.zeros((num_chunks, num_chunks))
+    synthesis_similarity = np.zeros((num_synth_steps, num_synth_steps))
+    
+    # Compute cosine similarities
+    for i in range(num_chunks):
+        for j in range(num_chunks):
+            sim = torch.cosine_similarity(chunk_embeddings_list[i], chunk_embeddings_list[j], dim=0)
+            probe_similarity[i, j] = sim.item()
+    
+    for i in range(num_synth_steps):
+        for j in range(num_synth_steps):
+            sim = torch.cosine_similarity(synth_embeddings_list[i], synth_embeddings_list[j], dim=0)
+            synthesis_similarity[i, j] = sim.item()
+    
+    # Create the plot
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+    
+    # Probe embeddings heatmap
+    sns.heatmap(probe_similarity, ax=ax1, cmap='viridis', annot=True, fmt='.2f', 
+                cbar_kws={'label': 'Cosine Similarity'})
+    ax1.set_title(f'Probe Embeddings\n({mode.capitalize()} Mode)')
+    ax1.set_xlabel('Chunk Index')
+    ax1.set_ylabel('Chunk Index')
+    
+    # Synthesis embeddings heatmap
+    sns.heatmap(synthesis_similarity, ax=ax2, cmap='viridis', annot=True, fmt='.2f',
+                cbar_kws={'label': 'Cosine Similarity'})
+    ax2.set_title(f'Synthesis Embeddings\n({mode.capitalize()} Mode)')
+    ax2.set_xlabel('Step Index')
+    ax2.set_ylabel('Step Index')
+    
+    # Overall title
+    plt.suptitle(f'Finesse Benchmark - Length {length} (N={num_samples}, Mode={mode})', 
+                 fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    
+    # Save the plot
+    os.makedirs(output_dir, exist_ok=True)
+    filename = f'heatmap_length_{length}_mode_{mode}.png'
+    filepath = os.path.join(output_dir, filename)
+    plt.savefig(filepath, dpi=300, bbox_inches='tight')
     plt.close()
     
-    return filename
+    return filepath
