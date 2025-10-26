@@ -13,13 +13,14 @@ class HuggingFaceEmbedder(FinesseEmbedder):
     Hugging Face 모델을 사용하는 임베딩 엔진 구현체.
     """
     
-    def __init__(self, model_path: str, prefix: Optional[str] = None):
+    def __init__(self, model_path: str, prefix: Optional[str] = None, device: Optional[str] = None):
         """
         Args:
             model_path: Hugging Face 모델 경로
             prefix: 임베딩 전 텍스트에 추가할 접두사 (예: "passage: " for E5)
+            device: Optional device to use (e.g., 'cuda', 'cpu'). Defaults to auto-detect.
         """
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(device) if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model_path = model_path
         self.prefix = prefix or ""
         
@@ -28,7 +29,7 @@ class HuggingFaceEmbedder(FinesseEmbedder):
         self.model = AutoModel.from_pretrained(
             model_path,
             trust_remote_code=True,
-            dtype=torch.float16 if torch.cuda.is_available() else torch.float32
+            dtype=torch.float16 if self.device.type == 'cuda' else torch.float32
         ).to(self.device).eval()
     
     def encode(self, texts: list[str]) -> torch.Tensor:
@@ -192,19 +193,20 @@ class HuggingFaceSynthesizer(FinesseSynthesizer):
     Hugging Face 합성 모델(merger)을 사용하는 합성 엔진 구현체.
     """
     
-    def __init__(self, model_path: str):
+    def __init__(self, model_path: str, device: Optional[str] = None):
         """
         Args:
             model_path: Hugging Face 합성 모델 경로
+            device: Optional device to use (e.g., 'cuda', 'cpu'). Defaults to auto-detect.
         """
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(device) if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model_path = model_path
         
         # Load model
         self.model = AutoModel.from_pretrained(
             model_path,
             trust_remote_code=True,
-            dtype=torch.float16 if torch.cuda.is_available() else torch.float32
+            dtype=torch.float16 if self.device.type == 'cuda' else torch.float32
         ).to(self.device).eval()
     
     def synthesize(self, embeddings: torch.Tensor) -> torch.Tensor:
