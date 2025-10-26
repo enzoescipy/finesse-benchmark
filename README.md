@@ -44,6 +44,22 @@ Generate a default `benchmark.yaml` template:
 finesse init --output benchmark.yaml
 ```
 
+For official leaderboard submissions, use the standardized config:
+
+```bash
+finesse init --leaderboard
+```
+
+This copies the official `benchmark.leaderboard.yaml` to `benchmark.yaml`, ensuring reproducibility with fixed seed (42), balanced sequence lengths (4-32), and samples per length (25).
+
+Alternatively, manually copy:
+
+```bash
+cp "benchmark.leaderboard.yaml" "benchmark.yaml"
+```
+
+**Note:** For leaderboard, use the official config as-is without modifications to maintain fairness. Edit only for custom evaluations.
+
 Edit `benchmark.yaml` to select mode, models, and probe settings. For BYOK mode, see the dedicated section below.
 
 ### 2. Generate Raw Embeddings
@@ -87,15 +103,21 @@ finesse checksum --json-path results/benchmark_results.json --model-path Snowfla
 All commands use [Typer](https://typer.tiangolo.com/) for intuitive interfaces. Run `finesse --help` for overview.
 
 ### `finesse init`
-Generates a commented `benchmark.yaml` template.
+Generates a commented `benchmark.yaml` template or copies the official leaderboard config.
 
 **Options**:
+- `--leaderboard`: Use official leaderboard configuration (copies `benchmark.leaderboard.yaml` to output; default: False).
 - `--output`: Path to save YAML (default: `benchmark.yaml`).
 
-**Example**:
-```bash
-finesse init --output my_config.yaml
-```
+**Examples**:
+- Default template:
+  ```bash
+  finesse init --output my_config.yaml
+  ```
+- Leaderboard config:
+  ```bash
+  finesse init --leaderboard
+  ```
 
 The template includes examples for all modes and validates against `BenchmarkConfig` before saving.
 
@@ -219,13 +241,49 @@ BYOK mode integrates external embedding APIs (e.g., OpenAI, Cohere) via [LiteLLM
   - `base_embedder`/`native_embedder`: Embedder path (e.g., `"intfloat/multilingual-e5-base"`).
 - **dataset**: HF path (default: `"enzoescipy/finesse-benchmark-database"`), split (`"train"`).
 - **probe_config**:
-  - `mask_ratio`: 0.15 (fraction masked).
   - `sequence_length`: `{min: 5, max: 16}` (probe lengths in tokens).
   - `samples_per_length`: 1+ (evals per length).
 - **advanced**: `{batch_size: 8, device: "cuda"}` (optional).
 - **seed**: 42 (reproducibility).
 
 Pydantic ensures type safety; invalid configs raise `ValueError` on load.
+
+## Leaderboard Submission Guide
+
+To ensure fair, reproducible, and standardized evaluations for the official Finesse leaderboard:
+
+1. **Initialize Official Config**:
+   Use the CLI for convenience:
+   ```bash
+   finesse init --leaderboard
+   ```
+   This copies `benchmark.leaderboard.yaml` to `benchmark.yaml` with fixed settings (seed: 42, sequence_length: {min: 4, max: 32}, samples_per_length: 25).
+   
+   Or manually (for scripts/environments without CLI):
+   ```bash
+   cp "benchmark.leaderboard.yaml" "benchmark.yaml"
+   ```
+   
+   **Important:** Do not modify this config for leaderboard submissions. Use as-is for comparability.
+
+2. **Run Evaluation**:
+   Generate embeddings:
+   ```bash
+   finesse generate --config benchmark.yaml --output results
+   ```
+   Score results:
+   ```bash
+   finesse score --pt-path results/embeddings_merger_mode_finesse-benchmark-database.pt --output results
+   ```
+
+3. **Verify & Submit**:
+   Check integrity:
+   ```bash
+   finesse checksum --json-path results/benchmark_results.json --model-path <your-model-id>
+   ```
+   Submit `benchmark_results.json` to the leaderboard (via HF Spaces, GitHub, etc.). Include `content_hash` and `model_hash` for verification.
+
+This setup guarantees all submissions use identical dataset sampling, probe generation, and randomness, focusing purely on model performance.
 
 ## Development
 

@@ -1,0 +1,48 @@
+# Finesse Benchmark: Official Leaderboard Configuration
+
+# This YAML serves as the official standard configuration for leaderboard submissions.
+# To submit results, copy this file to benchmark.yaml and run the evaluation.
+# It ensures fairness, reproducibility, and alignment with Finesse's core philosophy of evaluating
+# composition (synthesis) without artificial masking.
+
+# Do NOT modify this file for submissions. Use it as-is for standardized scoring.
+
+mode: "merger_mode"  # Standard: merger_mode for sequence-merger evaluations. Change only if comparing native/BYOK modes explicitly.
+
+# Models Configuration (Standard for Leaderboard)
+models:
+  # Sequence Merger (core for merger_mode)
+  merger:
+    name: "enzoescipy/sequence-merger-malgeum"  # Official merger model; use your fine-tuned variant if submitting custom
+  # Base Embedder (used in merger_mode and as probe embedder)
+  base_embedder:
+    name: "intfloat/multilingual-e5-base"  # Standard multilingual base for global coverage
+  # Native Embedder (for native_mode comparisons)
+  native_embedder:
+    name: "Snowflake/snowflake-arctic-embed-l-v2.0"  # Reference long-context embedder
+
+  # BYOK Example (Uncomment for external APIs; set env vars for keys)
+  # byok_embedder:
+  #   provider: "openai"
+  #   name: "text-embedding-3-large"
+
+# Dataset Configuration (Fixed for Reproducibility)
+dataset:
+  path: "enzoescipy/finesse-benchmark-database"  # Official dataset
+  split: "train"  # Use train split for consistency
+
+# Probe Configuration (Standard for Leaderboard)
+# Balances short-to-medium sequence evaluation with sufficient samples for statistical significance
+probe_config:
+  sequence_length:
+    min: 4   # Minimum length: Tests basic composition
+    max: 32  # Maximum length: Tests scaling up to moderate long-context
+  samples_per_length: 25  # Samples per length: Ensures reliable averages (25 evals per point)
+
+# Advanced Settings (Defaults for Fair Comparison)
+advanced:
+  batch_size: 8   # Efficient batching; adjust based on hardware
+  device: "cuda"   # Use GPU if available; falls back to CPU
+
+# Seed for Reproducibility (Immutable for Leaderboard)
+seed: 42  # Fixed seed: Ensures identical dataset shuffling and randomness across runs

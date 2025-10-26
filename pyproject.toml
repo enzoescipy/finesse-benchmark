@@ -1,6 +1,6 @@
 [project]
 name = "finesse-benchmark"
-version = "0.1.6"
+version = "0.1.7"
 description = "sophisticated evaluation framework designed to assess the performance of long-context embedding models on semantic understanding and information retention"
 authors = [{ name = "winter.sci.dev", email = "enzoescipy@gmail.com" }]
 readme = "README.md"
@@ -17,6 +17,8 @@ transformers = "^4.57.1"
 seaborn = "^0.13.2"
 typer = "^0.20.0"
 litellm ="^1.78.7"
+matplotlib ="^3.10.7"
+click = "^8.3.0"
 
 [tool.poetry.scripts]
 finesse = "finesse_benchmark.cli:app"
