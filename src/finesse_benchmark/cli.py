@@ -78,6 +78,19 @@ def generate_raw_data(
     if num_seed:
         config.seed = num_seed
     
+    # Validate sequence lengths - minimum length must be 4 for valid scoring
+    sequence_lengths = config.probe_config.sequence_lengths
+    invalid_lengths = [length for length in sequence_lengths if length < 4]
+    
+    if invalid_lengths:
+        typer.echo(f"❌ Error: Invalid sequence lengths found: {invalid_lengths}")
+        typer.echo("   Minimum sequence length must be 4 for valid scoring.")
+        typer.echo("   For lengths < 4, the scoring system cannot properly evaluate")
+        typer.echo("   contextual coherence and bottom-up coherence.")
+        raise typer.Exit(code=1)
+    
+    typer.echo(f"✅ Valid sequence lengths: {sequence_lengths}")
+    
     # Create output dir
     os.makedirs(output_dir, exist_ok=True)
 

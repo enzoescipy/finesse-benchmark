@@ -117,45 +117,34 @@ def generate_heatmap_for_length(
     else:
         raise ValueError(f"Unsupported mode: {mode}")
     
-    # Now generate the heatmap with the processed embeddings
+    # Now generate the SINGLE meaningful cross-similarity heatmap
     num_chunks = len(chunk_embeddings_list)
     num_synth_steps = len(synth_embeddings_list)
     
-    # Create similarity matrices
-    probe_similarity = np.zeros((num_chunks, num_chunks))
-    synthesis_similarity = np.zeros((num_synth_steps, num_synth_steps))
+    # Create the cross-similarity matrix: synth_embeddings (Y) vs chunk_embeddings (X)
+    cross_similarity = np.zeros((num_synth_steps, num_chunks))
     
-    # Compute cosine similarities
-    for i in range(num_chunks):
-        for j in range(num_chunks):
-            sim = torch.cosine_similarity(chunk_embeddings_list[i], chunk_embeddings_list[j], dim=0)
-            probe_similarity[i, j] = sim.item()
+    # Compute cosine similarities between synthesis steps and original chunks
+    for i in range(num_synth_steps):  # Y-axis: Synthesis steps
+        for j in range(num_chunks):  # X-axis: Chunk indices
+            sim = torch.cosine_similarity(synth_embeddings_list[i], chunk_embeddings_list[j], dim=0)
+            cross_similarity[i, j] = sim.item()
     
-    for i in range(num_synth_steps):
-        for j in range(num_synth_steps):
-            sim = torch.cosine_similarity(synth_embeddings_list[i], synth_embeddings_list[j], dim=0)
-            synthesis_similarity[i, j] = sim.item()
+    # Create the single meaningful plot
+    fig, ax = plt.subplots(1, 1, figsize=(12, 8))
     
-    # Create the plot
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-    
-    # Probe embeddings heatmap
-    sns.heatmap(probe_similarity, ax=ax1, cmap='viridis', annot=True, fmt='.2f', 
+    # Cross-similarity heatmap: Synthesis (Y) vs Chunks (X)
+    sns.heatmap(cross_similarity, ax=ax, cmap='viridis', annot=True, fmt='.2f', 
                 cbar_kws={'label': 'Cosine Similarity'})
-    ax1.set_title(f'Probe Embeddings\n({mode.capitalize()} Mode)')
-    ax1.set_xlabel('Chunk Index')
-    ax1.set_ylabel('Chunk Index')
+    ax.set_title(f'Cross-Similarity: Synthesis vs Chunks({mode.capitalize()} Mode)', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Chunk Index (Memory Probes ←→ Noise Probes)')
+    ax.set_ylabel('Synthesis Step Index')
     
-    # Synthesis embeddings heatmap
-    sns.heatmap(synthesis_similarity, ax=ax2, cmap='viridis', annot=True, fmt='.2f',
-                cbar_kws={'label': 'Cosine Similarity'})
-    ax2.set_title(f'Synthesis Embeddings\n({mode.capitalize()} Mode)')
-    ax2.set_xlabel('Step Index')
-    ax2.set_ylabel('Step Index')
+    # Add interpretation guide
+    ax.text(0.02, 0.98, 'High similarity = Model remembers the chunk', 
+            transform=ax.transAxes, fontsize=10, verticalalignment='top',
+            bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
     
-    # Overall title
-    plt.suptitle(f'Finesse Benchmark - Length {length} (N={num_samples}, Mode={mode})', 
-                 fontsize=14, fontweight='bold')
     plt.tight_layout()
     
     # Save the plot
