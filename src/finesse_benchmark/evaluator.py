@@ -161,7 +161,7 @@ class FinesseEvaluator:
                     else:  # native_mode
                         tokenizer = self.models['native_embedder']['tokenizer']
                     
-                    target_token_size = self.config.probe_config.chunk_token_size
+                    target_token_size = self.config.probe_config.token_per_sample
                     
                     for bead_text in beads:
                         # Tokenize the bead to count tokens
