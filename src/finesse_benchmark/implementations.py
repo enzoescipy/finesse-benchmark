@@ -54,7 +54,7 @@ class HuggingFaceEmbedder(FinesseEmbedder):
         
         # Normalize
         embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
-        return embeddings.cpu().to(torch.float32)
+        return embeddings
     
     
     def device(self) -> torch.device:
@@ -232,7 +232,7 @@ class HuggingFaceSynthesizer(FinesseSynthesizer):
         
         # Normalize
         synth_emb = torch.nn.functional.normalize(synth_emb, p=2, dim=1)
-        return synth_emb.cpu().to(torch.float32)
+        return synth_emb
     
     
     def device(self) -> torch.device:
