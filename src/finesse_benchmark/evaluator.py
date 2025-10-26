@@ -130,6 +130,15 @@ class FinesseEvaluator:
                 for i in range(1, target_length + 1):
                     partial_embs = torch.stack(chunk_embeddings[:i]).unsqueeze(0)  # (1, i, D)
                     synth_emb = self.synthesizer.synthesize(partial_embs).squeeze(0)
+
+                    # Validate synthesizer output: must be 1D tensor (d_model,)
+                    if synth_emb.dim() != 1:
+                        raise ValueError(
+                            f"Synthesizer contract violation: synthesize() must return a 1D tensor, "
+                            f"but instead returned a {synth_emb.dim()}-dimensional tensor with shape {synth_emb.shape}. "
+                            "Please check your custom synthesizer's output format."
+                        )
+
                     synthesis_embeddings.append(synth_emb)
                 
                 # 샘플 결과 저장
