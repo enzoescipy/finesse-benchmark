@@ -42,7 +42,7 @@ def calculate_self_attestation_scores(chunk_embeddings, synth_embeddings):
         # Assign 2-tier system
         tier_for_chunk = []
         for j in range(M):
-            if j < i:  # Memory chunks: part of the synthesis
+            if j <= i:  # Memory chunks: part of the synthesis
                 tier = 1
             else:  # Noise chunks: not part of the synthesis
                 tier = 2

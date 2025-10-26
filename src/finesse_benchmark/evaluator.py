@@ -110,10 +110,7 @@ class FinesseEvaluator:
                                 chunk_token_count += target_token_size
                                 break
                         
-                        # 부분 청크 처리
-                        if current_chunk and len(chunk_texts) < target_length:
-                            chunk_texts.append(' '.join(current_chunk))
-                            chunk_token_count += current_token_count
+
                     
                     except (StopIteration, KeyError):
                         # 이터레이터가 끝나면 다시 시작
