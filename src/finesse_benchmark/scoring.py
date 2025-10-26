@@ -1,6 +1,5 @@
 import torch
 import torch.nn.functional as F
-import numpy as np
 
 def calculate_self_attestation_scores(chunk_embeddings, synth_embeddings):
     """
@@ -31,10 +30,10 @@ def calculate_self_attestation_scores(chunk_embeddings, synth_embeddings):
         synth_emb_tensor.unsqueeze(1), 
         chunk_emb_tensor.unsqueeze(0), 
         dim=2
-    ).cpu().numpy()
+    )
     
-    N = len(sim_matrix)  # Number of synthesis steps
-    M = len(sim_matrix[0])  # Number of chunks
+    N = sim_matrix.shape[0]  # Number of synthesis steps
+    M = sim_matrix.shape[1]  # Number of chunks
 
     row_gaps = []
 
@@ -59,19 +58,19 @@ def calculate_self_attestation_scores(chunk_embeddings, synth_embeddings):
 
         # Calculate Robust Gap if both tiers have scores
         if len(tier1_scores) > 0 and len(tier2_scores) > 0:
-            q1_t1 = np.percentile(tier1_scores, 25)
-            q3_t2 = np.percentile(tier2_scores, 75)
+            q1_t1 = torch.quantile(tier1_scores, 0.25)
+            q3_t2 = torch.quantile(tier2_scores, 0.75)
             row_gap = q1_t1 - q3_t2
         else:
-            row_gap = 0.0  # No meaningful separation possible
+            row_gap = torch.tensor(0.0, device=sim_matrix.device)  # No meaningful separation possible
 
         row_gaps.append(row_gap)
 
     # Overall contextual coherence score (average robust gap)
-    contextual_coherence = np.mean(row_gaps) if row_gaps else 0.0
+    contextual_coherence = torch.mean(torch.stack(row_gaps)).item() if row_gaps else 0.0
 
     return {
-        'contextual_coherence': float(contextual_coherence)
+        'contextual_coherence': contextual_coherence
     }
 
 def calculate_self_attestation_scores_bottom_up(chunk_embeddings, synth_embeddings):
@@ -105,9 +104,9 @@ def calculate_self_attestation_scores_bottom_up(chunk_embeddings, synth_embeddin
         chunk_emb_tensor.unsqueeze(1), 
         synth_emb_tensor.unsqueeze(0), 
         dim=2
-    ).cpu().numpy()
+    )
     
-    M_synth = len(synth_embeddings)
+    M_synth = sim_bottom_up.shape[1]
 
     row_gaps = []
 
@@ -126,22 +125,22 @@ def calculate_self_attestation_scores_bottom_up(chunk_embeddings, synth_embeddin
         tier2_js = [j for j in range(M_synth) if tier_for_synth[j] == 2]
 
         # Collect scores for each tier (similarities from this anchor to synths)
-        tier1_scores = sim_bottom_up[anchor_idx, tier1_js]
-        tier2_scores = sim_bottom_up[anchor_idx, tier2_js]
+        tier1_scores = sim_bottom_up[anchor_idx][tier1_js]
+        tier2_scores = sim_bottom_up[anchor_idx][tier2_js]
 
         # Calculate Robust Gap if both tiers have scores
         if len(tier1_scores) > 0 and len(tier2_scores) > 0:
-            q1_t1 = np.percentile(tier1_scores, 25)
-            q3_t2 = np.percentile(tier2_scores, 75)
+            q1_t1 = torch.quantile(tier1_scores, 0.25)
+            q3_t2 = torch.quantile(tier2_scores, 0.75)
             row_gap = q1_t1 - q3_t2
         else:
-            row_gap = 0.0  # No meaningful separation
+            row_gap = torch.tensor(0.0, device=sim_bottom_up.device)  # No meaningful separation
 
         row_gaps.append(row_gap)
 
     # Average over all anchors
-    contextual_coherence_bottom_up = np.mean(row_gaps) if row_gaps else 0.0
+    contextual_coherence_bottom_up = torch.mean(torch.stack(row_gaps)).item() if row_gaps else 0.0
 
     return {
-        'bottom_up_coherence': float(contextual_coherence_bottom_up)
+        'bottom_up_coherence': contextual_coherence_bottom_up
     }

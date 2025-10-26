@@ -125,22 +125,32 @@ class FinesseEvaluator:
                 chunk_embeddings_tensor = self.embedder.encode(chunk_texts)
                 chunk_embeddings = [chunk_embeddings_tensor[i].cpu() for i in range(chunk_embeddings_tensor.size(0))]
                 
-                # 누적 합성 수행: A, AB, ABC, ..., ABCDEFG
+                # 누적 합성 수행: A, AB, ABC, ..., ABCDEFG (GPU Tour Optimization)
+                device = chunk_embeddings_tensor.device
                 synthesis_embeddings = []
-                for i in range(1, target_length + 1):
-                    partial_embs = torch.stack(chunk_embeddings[:i]).unsqueeze(0)  # (1, i, D)
+                cumulative_embeddings = torch.empty((0, chunk_embeddings[0].shape[0]), dtype=chunk_embeddings[0].dtype, device=device)
+
+                for emb in chunk_embeddings:
+                    single_on_device = emb.to(device)
+                    cumulative_embeddings = torch.cat([cumulative_embeddings, single_on_device.unsqueeze(0)], dim=0)
+                    partial_embs = cumulative_embeddings.unsqueeze(0)  # (1, i, D)
                     synth_emb = self.synthesizer.synthesize(partial_embs).squeeze(0)
-                    synth_emb = synth_emb.cpu()
+                    synth_emb_cpu = synth_emb.cpu()
 
                     # Validate synthesizer output: must be 1D tensor (d_model,)
-                    if synth_emb.dim() != 1:
+                    if synth_emb_cpu.dim() != 1:
                         raise ValueError(
                             f"Synthesizer contract violation: synthesize() must return a 1D tensor, "
-                            f"but instead returned a {synth_emb.dim()}-dimensional tensor with shape {synth_emb.shape}. "
+                            f"but instead returned a {synth_emb_cpu.dim()}-dimensional tensor with shape {synth_emb_cpu.shape}. "
                             "Please check your custom synthesizer's output format."
                         )
 
-                    synthesis_embeddings.append(synth_emb)
+                    synthesis_embeddings.append(synth_emb_cpu)
+
+                    # Clean up GPU tensors to prevent memory accumulation
+                    del single_on_device, partial_embs, synth_emb
+
+                del cumulative_embeddings  # Final cleanup
                 
                 # 샘플 결과 저장
                 sample_dict = {

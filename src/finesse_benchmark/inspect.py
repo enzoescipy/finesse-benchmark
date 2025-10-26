@@ -1,5 +1,6 @@
 import os
 import torch
+import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -56,6 +57,9 @@ def generate_heatmap_for_length(
         synth_embeddings_list = list(torch.unbind(synth_embeddings, dim=0))
         
     elif mode in ['best', 'worst']:
+        # Define device for scoring
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        
         # Find the best/worst sample based on scoring
         sample_scores = []
         
@@ -64,9 +68,13 @@ def generate_heatmap_for_length(
             synth_embs = sample_dict.get('synthesis_embeddings', [])
             
             if chunk_embs and synth_embs and len(chunk_embs) >= 2:
+                # Convert to device for scoring
+                chunk_embs_gpu = [emb.to(device) for emb in chunk_embs]
+                synth_embs_gpu = [emb.to(device) for emb in synth_embs]
+                
                 # Calculate scores using the new scoring functions
-                td_scores = calculate_self_attestation_scores(chunk_embs, synth_embs)
-                bu_scores = calculate_self_attestation_scores_bottom_up(chunk_embs, synth_embs)
+                td_scores = calculate_self_attestation_scores(chunk_embs_gpu, synth_embs_gpu)
+                bu_scores = calculate_self_attestation_scores_bottom_up(chunk_embs_gpu, synth_embs_gpu)
                 
                 avg_td = td_scores['contextual_coherence']
                 avg_bu = bu_scores['bottom_up_coherence']
@@ -117,18 +125,19 @@ def generate_heatmap_for_length(
     else:
         raise ValueError(f"Unsupported mode: {mode}")
     
-    # Now generate the SINGLE meaningful cross-similarity heatmap
-    num_chunks = len(chunk_embeddings_list)
-    num_synth_steps = len(synth_embeddings_list)
+    # Define device for vectorized computation
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
-    # Create the cross-similarity matrix: synth_embeddings (Y) vs chunk_embeddings (X)
-    cross_similarity = np.zeros((num_synth_steps, num_chunks))
+    # Vectorized cross-similarity computation
+    chunk_emb_tensor = torch.stack(chunk_embeddings_list).to(device)
+    synth_emb_tensor = torch.stack(synth_embeddings_list).to(device)
     
-    # Compute cosine similarities between synthesis steps and original chunks
-    for i in range(num_synth_steps):  # Y-axis: Synthesis steps
-        for j in range(num_chunks):  # X-axis: Chunk indices
-            sim = torch.cosine_similarity(synth_embeddings_list[i], chunk_embeddings_list[j], dim=0)
-            cross_similarity[i, j] = sim.item()
+    cross_sim = F.cosine_similarity(
+        synth_emb_tensor.unsqueeze(1), 
+        chunk_emb_tensor.unsqueeze(0), 
+        dim=2
+    )
+    cross_similarity = cross_sim.cpu().numpy()
     
     # Create the single meaningful plot
     fig, ax = plt.subplots(1, 1, figsize=(12, 8))
