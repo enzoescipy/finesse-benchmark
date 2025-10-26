@@ -591,7 +591,7 @@ def inspect(
                 return
 
             for avail_len in available_lengths:
-                length_data = length_results[str(avail_len)]
+                length_data = length_results[avail_len]
                 sample_results = length_data.get('sample_results', [])
                 
                 if not sample_results:
