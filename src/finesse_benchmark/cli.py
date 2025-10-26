@@ -357,7 +357,7 @@ def verify_integrity(
         click.echo(f"Stored Content Hash: {stored_hash}")
         click.echo(f"Recomputed Content Hash: {recomputed_hash}")
         
-        # If model_path provided, perform model provenance check
+        # If any model path provided, perform model provenance check
         if merger_path or base_embedder_path or native_path:
             if 'model_hash' not in data or data['model_hash'] is None:
                 click.echo("❌ Model Provenance FAILED: No 'model_hash' in results.")
@@ -369,16 +369,13 @@ def verify_integrity(
             try:
                 if config.mode == 'merger_mode':
                     # Dual Notarization Protocol: Verify both merger and base_embedder
-                    if len(merger_path) != 2:
-                        click.echo("❌ Model Provenance FAILED: For merger_mode, provide exactly two paths: --merger-path [MERGER] [EMBEDDER]")
+                    if not merger_path or not base_embedder_path:
+                        click.echo("❌ Model Provenance FAILED: For merger_mode, both --merger-path and --base-embedder-path must be provided.")
                         raise typer.Exit(code=1)
-                    
-                    merger_path = merger_path[0]
-                    base_path = merger_path[1]
                     
                     # Compute hashes for both models
                     computed_merger_hash = get_model_hash(merger_path)
-                    computed_base_hash = get_model_hash(base_path)
+                    computed_base_hash = get_model_hash(base_embedder_path)
                     
                     # Get stored hashes
                     stored_merger_hash = stored_model_hash.get('merger')
@@ -398,8 +395,8 @@ def verify_integrity(
                         
                 elif config.mode == 'native_mode':
                     # Single model verification for native_mode
-                    if len(native_path) != 1:
-                        click.echo("❌ Model Provenance FAILED: For native_mode, provide exactly one path: --native-path [EMBEDDER]")
+                    if not native_path:
+                        click.echo("❌ Model Provenance FAILED: For native_mode, --native-path must be provided.")
                         raise typer.Exit(code=1)
                     
                     computed_model_hash = get_model_hash(native_path)
@@ -415,8 +412,8 @@ def verify_integrity(
                         
                 elif config.mode == 'byok_mode':
                     # Diplomat Passport Protocol for BYOK mode
-                    if len(merger_path) > 0:
-                        click.echo("ℹ️ BYOK mode detected. --model-path parameter is ignored.")
+                    if merger_path or base_embedder_path or native_path:
+                        click.echo("ℹ️ BYOK mode detected. Model path parameters are ignored.")
                     
                     provider = config.models.byok_embedder.provider
                     name = config.models.byok_embedder.name
@@ -444,7 +441,7 @@ def verify_integrity(
             if config.mode == 'byok_mode':
                 click.echo("ℹ️ BYOK mode detected. Model provenance is based on provider/name identity.")
             elif config.mode == 'merger_mode':
-                click.echo("ℹ️ Run with --merger-path [MERGER] [EMBEDDER] for full dual provenance verification.")
+                click.echo("ℹ️ Run with --merger-path [MERGER] and --base-embedder-path [EMBEDDER] for full dual provenance verification.")
             else:
                 click.echo("ℹ️ Run with --native-path [EMBEDDER] for full provenance verification.")
     else:
