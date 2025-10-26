@@ -22,7 +22,7 @@ class FinesseEmbedder(ABC):
         """
         pass
 
-    @property
+    
     @abstractmethod
     def device(self) -> torch.device:
         """
@@ -81,7 +81,7 @@ class FinesseSynthesizer(ABC):
         """
         pass
 
-    @property
+    
     @abstractmethod
     def device(self) -> torch.device:
         """

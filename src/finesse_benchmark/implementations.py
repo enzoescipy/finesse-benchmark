@@ -55,7 +55,7 @@ class HuggingFaceEmbedder(FinesseEmbedder):
         embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
         return embeddings.cpu().to(torch.float32)
     
-    @property
+    
     def device(self) -> torch.device:
         return self.device
 
@@ -133,7 +133,7 @@ class ByokEmbedder(FinesseEmbedder):
         embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
         return embeddings
     
-    @property
+    
     def device(self) -> torch.device:
         return self.device
 
@@ -232,7 +232,7 @@ class HuggingFaceSynthesizer(FinesseSynthesizer):
         synth_emb = torch.nn.functional.normalize(synth_emb, p=2, dim=1)
         return synth_emb.cpu().to(torch.float32)
     
-    @property
+    
     def device(self) -> torch.device:
         return self.device
 
@@ -254,6 +254,6 @@ class MeanPoolingSynthesizer(FinesseSynthesizer):
         synth_emb = torch.nn.functional.normalize(synth_emb, p=2, dim=1)
         return synth_emb
     
-    @property
+    
     def device(self) -> torch.device:
         return self.device

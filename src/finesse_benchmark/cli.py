@@ -97,14 +97,14 @@ def generate_raw_data(
     typer.echo("Initializing FinesseEvaluator...")
     
     # Import the engine implementations
-    from .implementations import HuggingFaceEmbedder, ByokEmbedder, SequenceMergerSynthesizer, PassThroughSynthesizer
+    from .implementations import HuggingFaceEmbedder, ByokEmbedder, HuggingFaceSynthesizer, MeanPoolingSynthesizer
     
     # Initialize embedder and synthesizer based on mode
     if config.mode == 'merger_mode':
         typer.echo("  Mode: merger_mode")
         # Use base embedder for embedding and sequence merger for synthesis
         embedder = HuggingFaceEmbedder(config.models.base_embedder.name)
-        synthesizer = SequenceMergerSynthesizer(config.models.merger.name, embedder)
+        synthesizer = HuggingFaceSynthesizer(config.models.merger.name)
         typer.echo(f"  Embedder: {config.models.base_embedder.name}")
         typer.echo(f"  Synthesizer: {config.models.merger.name}")
     
@@ -112,7 +112,7 @@ def generate_raw_data(
         typer.echo("  Mode: native_mode")
         # Use native embedder for both embedding and synthesis (pass-through)
         embedder = HuggingFaceEmbedder(config.models.native_embedder.name)
-        synthesizer = PassThroughSynthesizer()
+        synthesizer = MeanPoolingSynthesizer()
         typer.echo(f"  Embedder: {config.models.native_embedder.name}")
         typer.echo("  Synthesizer: pass-through")
     
@@ -128,7 +128,7 @@ def generate_raw_data(
             model_name=config.models.byok_embedder.name,
             tokenizer_path=config.models.byok_embedder.tokenizer_path
         )
-        synthesizer = PassThroughSynthesizer()
+        synthesizer = MeanPoolingSynthesizer()
         typer.echo(f"  Embedder: {config.models.byok_embedder.provider}/{config.models.byok_embedder.name}")
         typer.echo("  Synthesizer: pass-through")
     
@@ -354,24 +354,6 @@ def verify_integrity(
     if not os.path.exists(json_path):
         typer.echo(f"❌ Error: File not found: {json_path}")
         raise typer.Exit(code=1)
-    
-    # Validate model_path if provided
-    if merger_path or base_embedder_path or native_path:
-        # Enforce that model_path must be a Hugging Face model ID.
-        is_likely_local_path = (
-            os.path.isabs(merger_path) or
-            '\\' in merger_path or
-            merger_path.startswith('./') or
-            merger_path.startswith('../') or
-            # A simple check for file extensions like .pt or .bin
-            ( '.' in os.path.basename(merger_path) and merger_path.count('/') == 0 ) or
-            # More than one slash is likely a deep local path, not 'org/repo'
-            (merger_path.count('/') > 1)
-        )
-
-        if is_likely_local_path:
-             click.echo("❌ Model Provenance FAILED: Only Hugging Face model IDs (e.g., 'org/repo') are accepted. Local file paths are not allowed.")
-             raise typer.Exit(code=1)
     
     import json  # Ensure json is imported
     

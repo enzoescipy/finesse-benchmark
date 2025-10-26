@@ -55,92 +55,95 @@ class FinesseEvaluator:
             typer.echo(f"probe sequence [{target_length}] in progress ...")
             
             sample_results = []  # List of 25 dicts per length
-            for index in range(self.config.probe_config.samples_per_length):
-                typer.echo(f"probe sequence [{target_length}] in progress ({index}/{self.config.probe_config.samples_per_length})...")
-                try:
-                    sample = next(iterator)  # 다음 고유 샘플 가져옴
-                    beads = sample['beads']  # List of bead texts
-                    if not beads or len(beads) < target_length:
-                        # Skip if not enough beads
-                        continue
-
-                    # Intelligent tailor logic: thread beads and precisely cut to reach target token size
-                    chunk_texts = []
-                    current_chunk = []
-                    current_token_count = 0
-                    target_token_size = self.config.probe_config.token_per_sample 
-
-                    for bead_text in beads:
-                        # Count tokens for this bead using the embedder's tokenizer
-                        bead_token_count = self.embedder.count_tokens(bead_text)
-
-                        # Check if adding this bead would exceed target
-                        if current_token_count + bead_token_count > target_token_size:
-                            # Calculate how many tokens we need to complete the current chunk
-                            tokens_needed = target_token_size - current_token_count
-                            
-                            if tokens_needed > 0:
-                                # Use the embedder's scissors to cut exactly what we need
-                                needed_text = self.embedder.chunk_text(bead_text, tokens_needed)
-                                current_chunk.append(needed_text)
-                            
-                            # Finalize the perfectly sized chunk
-                            chunk_texts.append(' '.join(current_chunk))
-                            current_chunk = []
-                            current_token_count = 0
-                            
-                            # The remaining part of the bead is discarded
-                            # We move to the next bead to start a new chunk
+            attempts = 0
+            max_attempts = len(dataset)  # 데이터셋 전체를 최대 시도 횟수로
+            
+            # 진정한 원칙: target_length 개의 청크로 구성된 시퀀스를 samples_per_length번 테스트
+            while len(sample_results) < self.config.probe_config.samples_per_length:
+                attempts += 1
+                if attempts > max_attempts:
+                    raise ValueError(f"데이터셋 소진: target_length={target_length}에서 충분한 샘플을 찾을 수 없음. {len(sample_results)}/{self.config.probe_config.samples_per_length}개만 생성됨.")
+                
+                typer.echo(f"probe sequence [{target_length}] in progress ({len(sample_results)}/{self.config.probe_config.samples_per_length})...")
+                
+                # 이 테스트를 위해 target_length 개의 청크를 생성
+                chunk_texts = []
+                chunk_token_count = 0
+                
+                # target_length 개의 청크를 생성할 때까지 데이터셋에서 구슬을 가져옴
+                while len(chunk_texts) < target_length:
+                    try:
+                        sample = next(iterator)
+                        beads = sample['beads']
+                        
+                        # 구슬이 없으면 다음 샘플로
+                        if not beads:
                             continue
                         
-                        # Add bead to current chunk (it fits perfectly)
-                        current_chunk.append(bead_text)
-                        current_token_count += bead_token_count
+                        # 이 샘플에서 하나의 청크 생성
+                        current_chunk = []
+                        current_token_count = 0
+                        target_token_size = self.config.probe_config.token_per_sample
                         
-                        # If we have enough chunks, break early
-                        if len(chunk_texts) >= target_length:
-                            break
+                        for bead_text in beads:
+                            bead_token_count = self.embedder.count_tokens(bead_text)
+                            
+                            # 토큰 수가 초과하면 정확히 잘라서 청크 완성
+                            if current_token_count + bead_token_count > target_token_size:
+                                tokens_needed = target_token_size - current_token_count
+                                if tokens_needed > 0:
+                                    needed_text = self.embedder.chunk_text(bead_text, tokens_needed)
+                                    current_chunk.append(needed_text)
+                                
+                                # 청크 완성
+                                chunk_texts.append(' '.join(current_chunk))
+                                chunk_token_count += target_token_size
+                                break
+                            
+                            # 청크에 구슬 추가
+                            current_chunk.append(bead_text)
+                            current_token_count += bead_token_count
+                            
+                            # 정확히 타겟 토큰 수에 도달하면 청크 완성
+                            if current_token_count == target_token_size:
+                                chunk_texts.append(' '.join(current_chunk))
+                                chunk_token_count += target_token_size
+                                break
+                        
+                        # 부분 청크 처리
+                        if current_chunk and len(chunk_texts) < target_length:
+                            chunk_texts.append(' '.join(current_chunk))
+                            chunk_token_count += current_token_count
                     
-                    # Handle any remaining partial chunk at the end
-                    if current_chunk and len(chunk_texts) < target_length:
-                        # Finalize the partial chunk as-is
-                        chunk_texts.append(' '.join(current_chunk))
-                    
-                    # If we don't have enough chunks, skip this sample
-                    if len(chunk_texts) < target_length:
+                    except (StopIteration, KeyError):
+                        # 이터레이터가 끝나면 다시 시작
+                        iterator = iter(dataset)
                         continue
-                    
-                    # Embed the chunks using our new embedder engine
-                    chunk_embeddings_tensor = self.embedder.encode(chunk_texts[:target_length])
-                    chunk_embeddings = [chunk_embeddings_tensor[i] for i in range(chunk_embeddings_tensor.size(0))]
-
-                    # Synthesis embeddings: cumulative synthesis using partial chunk stacks
-                    synthesis_embeddings = []
-                    for i in range(1, target_length + 1):
-                        partial_embs = torch.stack(chunk_embeddings[:i]).unsqueeze(0)  # (1, i, D)
-                        synth_emb = self.synthesizer.synthesize(partial_embs).squeeze(0)
-                        synthesis_embeddings.append(synth_emb)
-
-                    # Package this sample's results
-                    sample_dict = {
-                        'chunk_embeddings': chunk_embeddings,
-                        'synthesis_embeddings': synthesis_embeddings
-                    }
-                    sample_results.append(sample_dict)
-
-                except (StopIteration, KeyError) as e:
-                    if isinstance(e, StopIteration):
-                        raise ValueError(f"데이터셋 소진: target_length={target_length}에서 샘플 부족.")
-                    else:
-                        # Skip on errors
-                        continue
-
-            # Store for this length only if we have samples
-            if sample_results:
-                length_results[target_length] = {
-                    'sample_results': sample_results,  # List of dicts, each with chunk and synth lists
-                    'num_synth_steps': target_length
+                
+                
+                # 청크들 임베딩
+                chunk_embeddings_tensor = self.embedder.encode(chunk_texts)
+                chunk_embeddings = [chunk_embeddings_tensor[i] for i in range(chunk_embeddings_tensor.size(0))]
+                
+                # 누적 합성 수행: A, AB, ABC, ..., ABCDEFG
+                synthesis_embeddings = []
+                for i in range(1, target_length + 1):
+                    partial_embs = torch.stack(chunk_embeddings[:i]).unsqueeze(0)  # (1, i, D)
+                    synth_emb = self.synthesizer.synthesize(partial_embs).squeeze(0)
+                    synthesis_embeddings.append(synth_emb)
+                
+                # 샘플 결과 저장
+                sample_dict = {
+                    'chunk_embeddings': chunk_embeddings,
+                    'synthesis_embeddings': synthesis_embeddings
                 }
+                sample_results.append(sample_dict)
+
+            # 이 길이에 대한 결과 저장
+            length_results[target_length] = {
+                'sample_results': sample_results,
+                'num_synth_steps': target_length
+            }
 
         return {
             'config': self.config.model_dump(),
