@@ -58,8 +58,8 @@ def calculate_self_attestation_scores(chunk_embeddings, synth_embeddings):
 
         # Calculate Robust Gap if both tiers have scores
         if len(tier1_scores) > 0 and len(tier2_scores) > 0:
-            q1_t1 = torch.quantile(tier1_scores, 0.25)
-            q3_t2 = torch.quantile(tier2_scores, 0.75)
+            q1_t1 = torch.quantile((tier1_scores).to(torch.float32), 0.25)
+            q3_t2 = torch.quantile((tier2_scores).to(torch.float32), 0.75)
             row_gap = q1_t1 - q3_t2
         else:
             row_gap = torch.tensor(0.0, device=sim_matrix.device)  # No meaningful separation possible
@@ -130,8 +130,8 @@ def calculate_self_attestation_scores_bottom_up(chunk_embeddings, synth_embeddin
 
         # Calculate Robust Gap if both tiers have scores
         if len(tier1_scores) > 0 and len(tier2_scores) > 0:
-            q1_t1 = torch.quantile(tier1_scores, 0.25)
-            q3_t2 = torch.quantile(tier2_scores, 0.75)
+            q1_t1 = torch.quantile((tier1_scores).to(torch.float32), 0.25)
+            q3_t2 = torch.quantile((tier2_scores).to(torch.float32), 0.75)
             row_gap = q1_t1 - q3_t2
         else:
             row_gap = torch.tensor(0.0, device=sim_bottom_up.device)  # No meaningful separation
