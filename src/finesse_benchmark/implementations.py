@@ -13,14 +13,16 @@ class HuggingFaceEmbedder(FinesseEmbedder):
     Hugging Face 모델을 사용하는 임베딩 엔진 구현체.
     """
     
-    def __init__(self, model_path: str, prefix: Optional[str] = None, device: Optional[str] = None):
+    def __init__(self, model_path: str, prefix: Optional[str] = None, device: Optional[str] = None, dtype: Optional[torch.dtype] = None):
         """
         Args:
             model_path: Hugging Face 모델 경로
             prefix: 임베딩 전 텍스트에 추가할 접두사 (예: "passage: " for E5)
             device: Optional device to use (e.g., 'cuda', 'cpu'). Defaults to auto-detect.
+            dtype: Optional data type for the model (e.g., torch.float16). Defaults to auto-detect based on device.
         """
         self.device = torch.device(device) if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.dtype = dtype or (torch.float16 if self.device.type == 'cuda' else torch.float32)
         self.model_path = model_path
         self.prefix = prefix or ""
         
@@ -29,7 +31,7 @@ class HuggingFaceEmbedder(FinesseEmbedder):
         self.model = AutoModel.from_pretrained(
             model_path,
             trust_remote_code=True,
-            dtype=torch.float16 if self.device.type == 'cuda' else torch.float32
+            dtype=self.dtype
         ).to(self.device).eval()
     
     def encode(self, texts: list[str]) -> torch.Tensor:
@@ -193,34 +195,32 @@ class HuggingFaceSynthesizer(FinesseSynthesizer):
     Hugging Face 합성 모델(merger)을 사용하는 합성 엔진 구현체.
     """
     
-    def __init__(self, model_path: str, device: Optional[str] = None):
+    def __init__(self, model_path: str, device: Optional[str] = None, dtype: Optional[torch.dtype] = None):
         """
         Args:
             model_path: Hugging Face 합성 모델 경로
             device: Optional device to use (e.g., 'cuda', 'cpu'). Defaults to auto-detect.
+            dtype: Optional data type for the model (e.g., torch.float16). Defaults to auto-detect based on device.
         """
         self.device = torch.device(device) if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.dtype = dtype or (torch.float16 if self.device.type == 'cuda' else torch.float32)
         self.model_path = model_path
         
         # Load model
         self.model = AutoModel.from_pretrained(
             model_path,
             trust_remote_code=True,
-            dtype=torch.float16 if self.device.type == 'cuda' else torch.float32
+            dtype=self.dtype
         ).to(self.device).eval()
     
     def synthesize(self, embeddings: torch.Tensor) -> torch.Tensor:
         """임베딩 시퀀스를 합성하여 반환한다."""
-        # Move to device if needed
-        if embeddings.device != self.device:
-            embeddings = embeddings.to(self.device)
-        
-        # Get model dtype
-        dtype = next(self.model.parameters()).dtype
+        # Ensure input is on correct device and dtype
+        embeddings = embeddings.to(device=self.device, dtype=self.dtype)
         
         # Run through model
         with torch.no_grad():
-            outputs = self.model(embeddings.to(dtype))
+            outputs = self.model(embeddings)
             
             # Handle different output formats
             if hasattr(outputs, 'pooler_output'):
