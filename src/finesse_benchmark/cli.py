@@ -455,6 +455,9 @@ models:
   # byok_embedder:
   #   provider: "openai"  # e.g., 'openai', 'cohere', 'google'
   #   name: "text-embedding-3-large"  # Provider-specific model name
+  #   tokenizer_path: null  # Optional: Hugging Face tokenizer path for accurate token counting
+  #                        # e.g., 'Cohere/cohere-tokenizer-fast' for Cohere models
+  #                        # If null, system will use tiktoken for OpenAI or fallback with warning
   #
   # IMPORTANT: API keys MUST be set as environment variables for security.
   # Do NOT store keys in this YAML file or commit them to version control.
@@ -469,6 +472,11 @@ models:
   #
   # For Google:
   #   export GOOGLE_API_KEY="your-google-key-here"
+  #
+  # Tokenizer Recommendations:
+  # - OpenAI models: Leave tokenizer_path null (uses tiktoken automatically)
+  # - Cohere models: Set tokenizer_path: "Cohere/cohere-tokenizer-fast"
+  # - Google models: Set tokenizer_path: "google-bert/bert-base-uncased" or similar
   #
   # litellm will automatically detect and use the appropriate environment variable
   # based on the 'provider' you specify. This ensures your keys remain secure.

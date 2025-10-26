@@ -19,6 +19,7 @@ typer = "^0.20.0"
 litellm ="^1.78.7"
 matplotlib ="^3.10.7"
 click = "^8.3.0"
+tiktoken = "^0.12.0"
 
 [tool.poetry.scripts]
 finesse = "finesse_benchmark.cli:app"

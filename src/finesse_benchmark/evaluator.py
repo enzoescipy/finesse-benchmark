@@ -5,6 +5,8 @@ from transformers import AutoModel, AutoTokenizer
 import numpy as np
 import litellm
 import typer
+import tiktoken
+import warnings
 
 from .config import BenchmarkConfig
 from .scoring import calculate_self_attestation_scores, calculate_self_attestation_scores_bottom_up
@@ -152,21 +154,48 @@ class FinesseEvaluator:
                     current_chunk = []
                     current_token_count = 0
                     
-                    # Get the appropriate tokenizer for token counting
+                    # Diplomat Protocol: Token counter selection logic
+                    token_counter = None
+                    
                     if self.config.mode == 'byok_mode':
-                        # For BYOK mode, use the probe tokenizer for counting
-                        tokenizer = self.models['probe_tokenizer']
+                        provider = self.config.models.byok_embedder.provider
+                        model_name = self.config.models.byok_embedder.name
+                        
+                        # 1. De Facto Standardization: Use tiktoken for OpenAI models
+                        if provider == 'openai':
+                            try:
+                                encoding = tiktoken.encoding_for_model(model_name)
+                                token_counter = lambda text: len(encoding.encode(text))
+                                typer.echo(f"INFO: Using tiktoken for OpenAI model: {model_name}")
+                            except KeyError:
+                                warnings.warn(f"tiktoken encoding for {model_name} not found. Defaulting to general-purpose tokenizer. Token counts may be inaccurate.")
+                        
+                        # 2. Delegation of Autonomy: Use user-specified tokenizer
+                        if token_counter is None and self.config.models.byok_embedder.tokenizer_path:
+                            path = self.config.models.byok_embedder.tokenizer_path
+                            typer.echo(f"INFO: Using user-specified tokenizer: {path}")
+                            user_tokenizer = AutoTokenizer.from_pretrained(path)
+                            token_counter = lambda text: len(user_tokenizer.encode(text, add_special_tokens=False))
+                        
+                        # 3. Fallback with clear warning
+                        if token_counter is None:
+                            warnings.warn(f"BYOK provider '{provider}' is not OpenAI and no 'tokenizer_path' was provided. Falling back to default tokenizer. TOKEN COUNTS WILL BE INACCURATE.")
+                            default_tokenizer = self.models['probe_tokenizer']
+                            token_counter = lambda text: len(default_tokenizer.encode(text, add_special_tokens=False))
+                    
                     elif self.config.mode == 'merger_mode':
                         tokenizer = self.models['base_embedder']['tokenizer']
+                        token_counter = lambda text: len(tokenizer.encode(text, add_special_tokens=False))
+                    
                     else:  # native_mode
                         tokenizer = self.models['native_embedder']['tokenizer']
+                        token_counter = lambda text: len(tokenizer.encode(text, add_special_tokens=False))
                     
                     target_token_size = self.config.probe_config.token_per_sample
                     
                     for bead_text in beads:
-                        # Tokenize the bead to count tokens
-                        bead_tokens = tokenizer.encode(bead_text, add_special_tokens=False)
-                        bead_token_count = len(bead_tokens)
+                        # Use the token counter function
+                        bead_token_count = token_counter(bead_text)
                         
                         # If adding this bead would exceed target, finalize current chunk
                         if current_token_count + bead_token_count > target_token_size and current_chunk:
