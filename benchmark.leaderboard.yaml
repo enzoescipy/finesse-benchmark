@@ -38,6 +38,7 @@ probe_config:
     min: 4   # Minimum length: Tests basic composition
     max: 32  # Maximum length: Tests scaling up to moderate long-context
   samples_per_length: 25  # Samples per length: Ensures reliable averages (25 evals per point)
+  token_per_sample : 256  # Number of tokens per chunk
 
 # Advanced Settings (Defaults for Fair Comparison)
 advanced:

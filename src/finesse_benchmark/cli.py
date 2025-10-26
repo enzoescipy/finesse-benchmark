@@ -485,6 +485,7 @@ probe_config:
     min: 5  # Minimum sequence length in tokens
     max: 16  # Maximum sequence length in tokens
   samples_per_length: 1  # Evaluations per length
+  token_per_sample : 256  # Number of tokens per chunk
 
 # Advanced Settings
 advanced: {}

@@ -147,10 +147,59 @@ class FinesseEvaluator:
                         # Skip if not enough beads
                         continue
 
-                    # Chunk embeddings: embed the first N beads individually
-                    chunk_texts = beads[:target_length]
+                    # New chunk generation: thread beads together to reach target token size
+                    chunk_texts = []
+                    current_chunk = []
+                    current_token_count = 0
+                    
+                    # Get the appropriate tokenizer for token counting
+                    if self.config.mode == 'byok_mode':
+                        # For BYOK mode, use the probe tokenizer for counting
+                        tokenizer = self.models['probe_tokenizer']
+                    elif self.config.mode == 'merger_mode':
+                        tokenizer = self.models['base_embedder']['tokenizer']
+                    else:  # native_mode
+                        tokenizer = self.models['native_embedder']['tokenizer']
+                    
+                    target_token_size = self.config.probe_config.chunk_token_size
+                    
+                    for bead_text in beads:
+                        # Tokenize the bead to count tokens
+                        bead_tokens = tokenizer.encode(bead_text, add_special_tokens=False)
+                        bead_token_count = len(bead_tokens)
+                        
+                        # If adding this bead would exceed target, finalize current chunk
+                        if current_token_count + bead_token_count > target_token_size and current_chunk:
+                            # Finalize current chunk
+                            chunk_texts.append(' '.join(current_chunk))
+                            current_chunk = []
+                            current_token_count = 0
+                        
+                        # Add bead to current chunk
+                        current_chunk.append(bead_text)
+                        current_token_count += bead_token_count
+                        
+                        # If we've reached or exceeded target, finalize chunk
+                        if current_token_count >= target_token_size:
+                            chunk_texts.append(' '.join(current_chunk))
+                            current_chunk = []
+                            current_token_count = 0
+                        
+                        # Stop if we have enough chunks for target_length
+                        if len(chunk_texts) >= target_length:
+                            break
+                    
+                    # Handle any remaining partial chunk
+                    if current_chunk and len(chunk_texts) < target_length:
+                        chunk_texts.append(' '.join(current_chunk))
+                    
+                    # If we don't have enough chunks, skip this sample
+                    if len(chunk_texts) < target_length:
+                        continue
+                    
+                    # Embed the chunks
                     chunk_embeddings = [
-                        self._get_embedding(bead_text, embedder_key) for bead_text in chunk_texts
+                        self._get_embedding(chunk_text, embedder_key) for chunk_text in chunk_texts[:target_length]
                     ]  # List of N 1D Tensors
 
                     # Synthesis embeddings: cumulative synthesis using partial chunk stacks

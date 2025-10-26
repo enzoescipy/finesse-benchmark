@@ -25,7 +25,8 @@ class ByokEmbedderConfig(BaseModel):
 class ProbeConfig(BaseModel):
     """프로브 생성 설정"""
     sequence_length: SequenceLengthConfig = Field(default=SequenceLengthConfig(min=4, max=16), description="시퀀스 길이 범위. min부터 max까지 순차적으로 평가.")
-    samples_per_length: int = Field(default=10, description="각 시퀀스 길이에 대해 평가할 샘플 개수. Stratified CSAT 모드에서 사용.")
+    samples_per_length: int = Field(default=10, description="각 시퀀스 길이에 대해 평가할 샘플 개수.")
+    token_per_sample: int = Field(default=256, description="해당 시퀸스 길이의 각 청크 자체의 크기. 토크나이저는 임베딩 엔진을 기준으로 합니다.")
 
 class ModelsConfig(BaseModel):
     merger: Optional[AutoModelSelector] = Field(default=None, description="merger_mode용 모델 설정")
@@ -66,23 +67,3 @@ class BenchmarkConfig(BaseModel):
             if self.models.byok_embedder is None:
                 raise ValueError("byok_mode requires 'models.byok_embedder' configuration.")
         return self
-
-    class Config:
-        json_schema_extra = {"example": {
-            "mode": "byok_mode",
-            "models": {
-                "byok_embedder": {
-                    "provider": "openai",
-                    "name": "text-embedding-3-small"
-                }
-            },
-            "probe_config": {
-                "sequence_length": {"min": 5, "max": 16},
-                "samples_per_length": 1,
-            },
-            "dataset": {
-                "path": "enzoescipy/finesse-benchmark-database",
-                "num_samples": 5
-            },
-            # ... 기타 필드
-        }}
