@@ -213,25 +213,29 @@ def score_embeddings(
     # Compute model hash for notarization (before content_hash)
     try:
         config = BenchmarkConfig.model_validate(config_dict)
-        model_hash = None
+        model_hash_dict = {}
         
         if config.mode == 'merger_mode':
-            model_path = config.models.merger.name
-            model_hash = get_model_hash(model_path)
-            typer.echo(f"Model hash computed: {model_hash[:16]}... (for notarization)")
+            # Dual Notarization Protocol: Hash both merger and base_embedder
+            merger_path = config.models.merger.name
+            base_path = config.models.base_embedder.name
+            model_hash_dict['merger'] = get_model_hash(merger_path)
+            model_hash_dict['base_embedder'] = get_model_hash(base_path)
+            typer.echo(f"Merger model hash computed: {model_hash_dict['merger'][:16]}...")
+            typer.echo(f"Base embedder hash computed: {model_hash_dict['base_embedder'][:16]}...")
         elif config.mode == 'native_mode':
-            model_path = config.models.native_embedder.name
-            model_hash = get_model_hash(model_path)
-            typer.echo(f"Model hash computed: {model_hash[:16]}... (for notarization)")
+            native_path = config.models.native_embedder.name
+            model_hash_dict['native'] = get_model_hash(native_path)
+            typer.echo(f"Native model hash computed: {model_hash_dict['native'][:16]}...")
         elif config.mode == 'byok_mode':
             # Diplomat Passport Protocol: Hash the identity string for BYOK models
             provider = config.models.byok_embedder.provider
             name = config.models.byok_embedder.name
             hash_string = f"byok:{provider}:{name}"
-            model_hash = get_content_hash({'identity': hash_string})
-            typer.echo(f"BYOK model identity hash computed: {model_hash[:16]}... (for notarization)")
+            model_hash_dict['byok'] = get_content_hash({'identity': hash_string})
+            typer.echo(f"BYOK model identity hash computed: {model_hash_dict['byok'][:16]}...")
         
-        base_results['model_hash'] = model_hash
+        base_results['model_hash'] = model_hash_dict
     except Exception as e:
         typer.echo(f"Warning: Could not compute model hash: {e}")
         base_results['model_hash'] = None
@@ -262,7 +266,9 @@ def score_embeddings(
 @app.command("checksum")
 def verify_integrity(
     json_path: str = typer.Option(..., "--json-path", help="Path to the results JSON file to verify"),
-    model_path: Optional[str] = typer.Option(None, "--model-path", help="Path to the original model file for full provenance check"),
+    merger_path: Optional[str] = typer.Option(None, "--merger-path", help="Path to the merger model (e.g., 'enzoescipy/sequence-merger-malgeum') for merger_mode provenance verification."),
+    base_embedder_path: Optional[str] = typer.Option(None, "--base-embedder-path", help="Path to the base embedder model (e.g., 'intfloat/multilingual-e5-base') for merger_mode provenance verification."),
+    native_path: Optional[str] = typer.Option(None, "--native-path", help="Path to the native embedder model for native_mode provenance verification."),
 ):
     """
     Verify the integrity of a results.json file using its self-contained content hash and optional model provenance.
@@ -276,20 +282,26 @@ def verify_integrity(
                  Must contain 'content_hash', 'model_hash' (optional), config, scores, etc.
 
     Optional Arguments:
-    --model-path: Hugging Face model ID (e.g., 'enzoescipy/sequence-merger-malgeum') to verify provenance.
-                  Local paths are NOT allowed for security; only remote HF IDs. Omit for content-only check.
+    --merger-path: Hugging Face model ID (e.g., 'enzoescipy/sequence-merger-malgeum') for merger_mode provenance.
+                   Only used if merger_mode is active in the config.
+    --base-embedder-path: Hugging Face model ID (e.g., 'intfloat/multilingual-e5-base') for merger_mode provenance.
+                          Only used if merger_mode is active in the config.
+    --native-path: Hugging Face model ID (e.g., 'Snowflake/snowflake-arctic-embed-l-v2.0') for native_mode provenance.
+                   Only used if native_mode is active in the config.
 
     Verification Steps:
     1. Content Integrity: Recompute SHA-256 of canonical JSON frame and match against stored 'content_hash'.
        SUCCESS: Results are untampered. FAILED: Alert for potential manipulation.
-    2. Model Provenance (if --model-path): Compute hash of the specified model and match 'model_hash'.
+    2. Model Provenance (if --merger-path, --base-embedder-path, or --native-path): Compute hash of the specified model and match 'model_hash'.
        Ensures results tie to the claimed model version.
 
     Usage Examples:
     $ finesse checksum --json-path results/benchmark_results.json
        # Basic content verification.
-    $ finesse checksum --json-path ./final/benchmark_results.json --model-path intfloat/multilingual-e5-base
-       # Full verification including model provenance.
+    $ finesse checksum --json-path ./final/benchmark_results.json --merger-path enzoescipy/sequence-merger-malgeum --base-embedder-path intfloat/multilingual-e5-base
+       # Full verification including merger_mode provenance.
+    $ finesse checksum --json-path ./final/benchmark_results.json --native-path Snowflake/snowflake-arctic-embed-l-v2.0
+       # Full verification including native_mode provenance.
 
     Security Notes:
     - Hashes are deterministic and reproducible across environments.
@@ -302,17 +314,17 @@ def verify_integrity(
         raise typer.Exit(code=1)
     
     # Validate model_path if provided
-    if model_path:
+    if merger_path or base_embedder_path or native_path:
         # Enforce that model_path must be a Hugging Face model ID.
         is_likely_local_path = (
-            os.path.isabs(model_path) or
-            '\\' in model_path or
-            model_path.startswith('./') or
-            model_path.startswith('../') or
+            os.path.isabs(merger_path) or
+            '\\' in merger_path or
+            merger_path.startswith('./') or
+            merger_path.startswith('../') or
             # A simple check for file extensions like .pt or .bin
-            ( '.' in os.path.basename(model_path) and model_path.count('/') == 0 ) or
+            ( '.' in os.path.basename(merger_path) and merger_path.count('/') == 0 ) or
             # More than one slash is likely a deep local path, not 'org/repo'
-            (model_path.count('/') > 1)
+            (merger_path.count('/') > 1)
         )
 
         if is_likely_local_path:
@@ -346,35 +358,83 @@ def verify_integrity(
         click.echo(f"Recomputed Content Hash: {recomputed_hash}")
         
         # If model_path provided, perform model provenance check
-        if model_path:
+        if merger_path or base_embedder_path or native_path:
             if 'model_hash' not in data or data['model_hash'] is None:
                 click.echo("❌ Model Provenance FAILED: No 'model_hash' in results.")
                 raise typer.Exit(code=1)
             
             stored_model_hash = data['model_hash']
+            config = BenchmarkConfig.model_validate(data['config'])
+            
             try:
-                # Determine the correct way to compute model hash based on config mode
-                config = BenchmarkConfig.model_validate(data['config'])
-                
-                if config.mode == 'byok_mode':
-                    # For BYOK mode, use the Diplomat Passport Protocol
+                if config.mode == 'merger_mode':
+                    # Dual Notarization Protocol: Verify both merger and base_embedder
+                    if len(merger_path) != 2:
+                        click.echo("❌ Model Provenance FAILED: For merger_mode, provide exactly two paths: --merger-path [MERGER] [EMBEDDER]")
+                        raise typer.Exit(code=1)
+                    
+                    merger_path = merger_path[0]
+                    base_path = merger_path[1]
+                    
+                    # Compute hashes for both models
+                    computed_merger_hash = get_model_hash(merger_path)
+                    computed_base_hash = get_model_hash(base_path)
+                    
+                    # Get stored hashes
+                    stored_merger_hash = stored_model_hash.get('merger')
+                    stored_base_hash = stored_model_hash.get('base_embedder')
+                    
+                    if computed_merger_hash == stored_merger_hash and computed_base_hash == stored_base_hash:
+                        click.echo("✅ Model Provenance SUCCESS")
+                        click.echo(f"Merger Hash: {computed_merger_hash[:16]}... (matches)")
+                        click.echo(f"Base Embedder Hash: {computed_base_hash[:16]}... (matches)")
+                    else:
+                        click.echo("❌ Model Provenance FAILED")
+                        if computed_merger_hash != stored_merger_hash:
+                            click.echo(f"Merger Hash Mismatch: Computed {computed_merger_hash[:16]}..., Stored {stored_merger_hash[:16]}...")
+                        if computed_base_hash != stored_base_hash:
+                            click.echo(f"Base Embedder Hash Mismatch: Computed {computed_base_hash[:16]}..., Stored {stored_base_hash[:16]}...")
+                        raise typer.Exit(code=1)
+                        
+                elif config.mode == 'native_mode':
+                    # Single model verification for native_mode
+                    if len(native_path) != 1:
+                        click.echo("❌ Model Provenance FAILED: For native_mode, provide exactly one path: --native-path [EMBEDDER]")
+                        raise typer.Exit(code=1)
+                    
+                    computed_model_hash = get_model_hash(native_path)
+                    stored_native_hash = stored_model_hash.get('native')
+                    
+                    if computed_model_hash == stored_native_hash:
+                        click.echo("✅ Model Provenance SUCCESS")
+                        click.echo(f"Native Model Hash: {computed_model_hash[:16]}... (matches)")
+                    else:
+                        click.echo("❌ Model Provenance FAILED")
+                        click.echo(f"Native Hash Mismatch: Computed {computed_model_hash[:16]}..., Stored {stored_native_hash[:16]}...")
+                        raise typer.Exit(code=1)
+                        
+                elif config.mode == 'byok_mode':
+                    # Diplomat Passport Protocol for BYOK mode
+                    if len(merger_path) > 0:
+                        click.echo("ℹ️ BYOK mode detected. --model-path parameter is ignored.")
+                    
                     provider = config.models.byok_embedder.provider
                     name = config.models.byok_embedder.name
                     hash_string = f"byok:{provider}:{name}"
                     computed_model_hash = get_content_hash({'identity': hash_string})
+                    stored_byok_hash = stored_model_hash.get('byok')
+                    
+                    if computed_model_hash == stored_byok_hash:
+                        click.echo("✅ Model Provenance SUCCESS")
+                        click.echo(f"BYOK Identity Hash: {computed_model_hash[:16]}... (matches)")
+                    else:
+                        click.echo("❌ Model Provenance FAILED")
+                        click.echo(f"BYOK Hash Mismatch: Computed {computed_model_hash[:16]}..., Stored {stored_byok_hash[:16]}...")
+                        raise typer.Exit(code=1)
                 else:
-                    # For merger_mode and native_mode, use standard model hash
-                    computed_model_hash = get_model_hash(model_path)
-                
-                if computed_model_hash == stored_model_hash:
-                    click.echo("✅ Model Provenance SUCCESS")
-                    click.echo(f"Stored Model Hash: {stored_model_hash}")
-                    click.echo(f"Computed Model Hash: {computed_model_hash}")
-                else:
-                    click.echo("❌ Model Provenance FAILED")
-                    click.echo(f"Stored Model Hash: {stored_model_hash}")
-                    click.echo(f"Computed Model Hash: {computed_model_hash}")
+                    click.echo("❌ Model Provenance ERROR: Unknown mode in config")
                     raise typer.Exit(code=1)
+                    
             except Exception as e:
                 click.echo(f"❌ Model Provenance ERROR: {e}")
                 raise typer.Exit(code=1)
@@ -383,8 +443,10 @@ def verify_integrity(
             config = BenchmarkConfig.model_validate(data['config'])
             if config.mode == 'byok_mode':
                 click.echo("ℹ️ BYOK mode detected. Model provenance is based on provider/name identity.")
+            elif config.mode == 'merger_mode':
+                click.echo("ℹ️ Run with --merger-path [MERGER] [EMBEDDER] for full dual provenance verification.")
             else:
-                click.echo("ℹ️ Run with --model-path for full provenance verification.")
+                click.echo("ℹ️ Run with --native-path [EMBEDDER] for full provenance verification.")
     else:
         click.echo("❌ Content Verification FAILED")
         click.echo(f"Stored Content Hash: {stored_hash}")
