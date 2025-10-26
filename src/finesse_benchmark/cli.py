@@ -146,36 +146,42 @@ def score_embeddings(
         typer.echo(f"Error: Input .pt file not found: {pt_path}")
         raise typer.Exit(code=1)
     
-    # Load full raw data
     raw_data = torch.load(pt_path)
     config_dict = raw_data['config']
-    raw_results = raw_data['raw_results']
-    length_results = raw_results.get('length_results', {})
+    length_results = raw_data.get('raw_results', {}).get('length_results', {})
     
     if not length_results:
         typer.echo("Error: No length results found in .pt file.")
         raise typer.Exit(code=1)
     
-    # Compute scores per length
     final_scores_per_length = {}
     for target_length, raw in length_results.items():
-        probe_embeddings = raw['probe_embeddings']
-        synthesis_embeddings = raw['synthesis_embeddings']
-        num_synth_steps = raw['num_synth_steps']
-        num_probes = len(probe_embeddings)
-        if num_probes >= 2 and num_synth_steps > 0:
-            td_scores = calculate_self_attestation_scores(probe_embeddings, synthesis_embeddings)
-            bu_scores = calculate_self_attestation_scores_bottom_up(probe_embeddings, synthesis_embeddings, num_synth_steps)
-            avg_td = td_scores['contextual_coherence']
-            avg_bu = bu_scores['bottom_up_coherence']
-            imbalance = abs(avg_td - avg_bu)
-            final_score = ((avg_td + avg_bu) / 2) - imbalance
-            final_score *= 500
-            final_scores_per_length[target_length] = final_score
-        else:
+        sample_results = raw.get('sample_results', [])
+        if not sample_results:
             final_scores_per_length[target_length] = 0.0
-    
-    # Average RSS
+            continue
+            
+        sample_scores = []
+        for sample_dict in sample_results:
+            probe_embeddings = sample_dict.get('chunk_embeddings')
+            synthesis_embeddings = sample_dict.get('synthesis_embeddings')
+
+            if probe_embeddings and synthesis_embeddings and len(probe_embeddings) >= 2:
+                td_scores = calculate_self_attestation_scores(probe_embeddings, synthesis_embeddings)
+                bu_scores = calculate_self_attestation_scores_bottom_up(probe_embeddings, synthesis_embeddings) # num_synth_steps removed
+                
+                avg_td = td_scores['contextual_coherence']
+                avg_bu = bu_scores['bottom_up_coherence']
+                imbalance = abs(avg_td - avg_bu)
+                final_score = ((avg_td + avg_bu) / 2) - imbalance
+                sample_scores.append(final_score)
+            else:
+                sample_scores.append(0.0)
+
+        # Average the scores of all samples for this length
+        avg_length_score = np.mean(sample_scores) if sample_scores else 0.0
+        final_scores_per_length[target_length] = avg_length_score * 500 # Scale after averaging
+
     avg_rss = np.mean(list(final_scores_per_length.values()))
     
     # Round scores for precision control (get_content_hash will convert to str)
@@ -199,29 +205,29 @@ def score_embeddings(
             model_path = config.models.merger.name
         else:
             model_path = config.models.native_embedder.name
-        model_hash = get_model_hash(model_path)
-        base_results['model_hash'] = model_hash
-        typer.echo(f"Model hash computed: {model_hash[:16]}... (for notarization)")
+            model_hash = get_model_hash(model_path)
+            base_results['model_hash'] = model_hash
+            typer.echo(f"Model hash computed: {model_hash[:16]}... (for notarization)")
     except Exception as e:
         typer.echo(f"Warning: Could not compute model hash: {e}")
         base_results['model_hash'] = None
     
-    # Create output dir before hashing to ensure debug path exists
+# Create output dir before hashing to ensure debug path exists
     os.makedirs(output_dir, exist_ok=True)
     
-    # Create copy for hashing with fixed frame ('content_hash': '')
+# Create copy for hashing with fixed frame ('content_hash': '')
     hash_data = base_results.copy()
     hash_data['content_hash'] = ''
     
-    # Compute content hash on the fixed frame with debug
+# Compute content hash on the fixed frame with debug
     content_hash = get_content_hash(hash_data)
-    # content_hash = get_content_hash(hash_data, debug_file_path='results/stored_canonical.txt')
+# content_hash = get_content_hash(hash_data, debug_file_path='results/stored_canonical.txt')
     
-    # Add the hash to final results
+# Add the hash to final results
     results = base_results.copy()
     results['content_hash'] = content_hash
     
-    # Save to JSON
+# Save to JSON
     output_path = os.path.join(output_dir, "benchmark_results.json")
     with open(output_path, "w", encoding='utf-8', newline='') as f:
         json.dump(results, f, indent=2)

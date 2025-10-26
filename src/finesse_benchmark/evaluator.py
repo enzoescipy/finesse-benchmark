@@ -4,6 +4,7 @@ from datasets import load_dataset
 from transformers import AutoModel, AutoTokenizer
 import numpy as np
 import litellm
+import typer
 
 from .config import BenchmarkConfig
 from .scoring import calculate_self_attestation_scores, calculate_self_attestation_scores_bottom_up
@@ -42,7 +43,7 @@ class FinesseEvaluator:
             load_embedder("native_embedder")
 
         elif self.config.mode == "byok_mode":
-            # Load tokenizer for probe assembly using a default multilingual model
+            # Load tokenizer for probe assembly using a default multilingual model (not used for individual beads)
             tokenizer_path = "intfloat/multilingual-e5-base"
             self.models["probe_tokenizer"] = AutoTokenizer.from_pretrained(tokenizer_path)
         
@@ -101,10 +102,7 @@ class FinesseEvaluator:
             return embedding.cpu().to(torch.float32)
 
     def raw_run(self) -> Dict[str, Any]:
-        """Finesse 벤치마크 실행: Stratified CSAT with Single-Pass Conveyor Belt and Dynamic Token Countdown (Raw mode - embeddings only)"""
-        from datasets import load_dataset
-        import numpy as np
-
+        """Finesse 벤치마크 실행: Stratified CSAT with Single-Pass Conveyor Belt (Raw mode - embeddings only)"""
         # Load dataset without any version parameter to use default
         dataset = load_dataset(
             path=self.config.dataset.path,
@@ -135,92 +133,69 @@ class FinesseEvaluator:
         else:
             raise ValueError(f"Unsupported mode: {self.config.mode}")
 
-        # Use the pre-loaded tokenizer for the correct embedder
-        if self.config.mode == 'byok_mode':
-            tokenizer = self.models["probe_tokenizer"]
-        else:
-            tokenizer = self.models[embedder_key]["tokenizer"]
-
-        length_results = {}  # 길이별 결과 저장
+        length_results = {}  # 길이별 결과 저장: {'sample_results': [dicts], 'num_synth_steps': N}
         for target_length in range(min_length, max_length + 1):
-            length_scores = []
-            probe_embeddings = []
-            for _ in range(self.config.probe_config.samples_per_length):
+            typer.echo(f"probe sequence [{target_length}] in progress ...")
+            
+            sample_results = []  # List of 25 dicts per length
+            for index in range(self.config.probe_config.samples_per_length):
+                typer.echo(f"probe sequence [{target_length}] in progress ({index}/{self.config.probe_config.samples_per_length})...")
                 try:
-                    sample = next(iterator)  # 다음 고유 샘플 (줄) 가져옴
-                    beads = sample['beads']  # List of bead texts (~64 tokens each)
-                    if not beads:
-                        raise ValueError("샘플에 beads가 없습니다.")
+                    sample = next(iterator)  # 다음 고유 샘플 가져옴
+                    beads = sample['beads']  # List of bead texts
+                    if not beads or len(beads) < target_length:
+                        # Skip if not enough beads
+                        continue
 
-                    # Dynamic Token Countdown: Assemble probe
-                    probe_text = ""
-                    current_token_count = 0
-                    beads_used = 0
-                    while current_token_count < target_length and beads_used < len(beads):
-                        next_bead = beads[beads_used]
-                        probe_text += (" " if probe_text else "") + next_bead  # Join with space
-                        beads_used += 1
-                        # Re-tokenize to get exact count
-                        token_ids = tokenizer.encode(probe_text, add_special_tokens=False)
-                        current_token_count = len(token_ids)
+                    # Chunk embeddings: embed the first N beads individually
+                    chunk_texts = beads[:target_length]
+                    chunk_embeddings = [
+                        self._get_embedding(bead_text, embedder_key) for bead_text in chunk_texts
+                    ]  # List of N 1D Tensors
 
-                    # Trim to exactly target_length tokens
-                    if current_token_count > target_length:
-                        token_ids = tokenizer.encode(probe_text, add_special_tokens=False)[:target_length]
-                        probe_text = tokenizer.decode(token_ids, skip_special_tokens=True)
-                    elif current_token_count < target_length:
-                        # Pad if short (rare, but handle)
-                        padding_needed = target_length - current_token_count
-                        probe_text += " " + "[PAD]" * (padding_needed // 4 + 1)  # Simple padding
-                        probe_text = probe_text[:target_length]  # Character trim fallback
+                    # Synthesis embeddings: cumulative synthesis using partial chunk stacks
+                    synthesis_embeddings = []
+                    for i in range(1, target_length + 1):
+                        partial_embs = chunk_embeddings[:i]
+                        if self.config.mode == 'merger_mode':
+                            merger = self.models['merger'].to(self.device).eval()
+                            src = torch.stack(partial_embs).unsqueeze(0).to(self.device)  # (1, i, D)
+                            dtype = next(merger.parameters()).dtype
+                            with torch.no_grad():
+                                outputs = merger(src.to(dtype))
+                                if hasattr(outputs, 'pooler_output'):
+                                    synth_emb = outputs.pooler_output.squeeze(0)
+                                elif hasattr(outputs, 'last_hidden_state'):
+                                    synth_emb = outputs.last_hidden_state.squeeze(0).mean(dim=0)
+                                else:
+                                    synth_emb = outputs[0].squeeze(0) if isinstance(outputs, tuple) else outputs.squeeze(0)
+                            synth_emb = synth_emb.cpu().to(torch.float32)
+                        else:  # native_mode or fallback: mean pooling
+                            synth_emb = torch.stack(partial_embs).mean(dim=0).cpu().to(torch.float32)
+                        
+                        # Normalize
+                        synth_emb = torch.nn.functional.normalize(synth_emb, p=2, dim=0)
+                        synthesis_embeddings.append(synth_emb)
 
-                    # Get embedding for precise probe_text using correct embedder
-                    probe_embedding = self._get_embedding(probe_text, embedder_key)
-                    probe_embeddings.append(probe_embedding)
+                    # Package this sample's results
+                    sample_dict = {
+                        'chunk_embeddings': chunk_embeddings,
+                        'synthesis_embeddings': synthesis_embeddings
+                    }
+                    sample_results.append(sample_dict)
+
                 except (StopIteration, KeyError) as e:
                     if isinstance(e, StopIteration):
                         raise ValueError(f"데이터셋 소진: target_length={target_length}에서 샘플 부족.")
-                    elif str(e) == "'beads'":
-                        raise KeyError("샘플에 'beads' 키가 없습니다. 데이터셋 구조 확인.")
                     else:
-                        # Skip this sample on other errors
+                        # Skip on errors
                         continue
-            
-            # Collective evaluation after collecting all samples for this length
-            num_probes = len(probe_embeddings)
-            if num_probes >= 2:
-                synthesis_embeddings = []
-                for i in range(1, num_probes + 1):
-                    partial_embs = probe_embeddings[:i]
-                    if self.config.mode == 'merger_mode':
-                        merger = self.models['merger'].to(self.device).eval()
-                        src = torch.stack(partial_embs).unsqueeze(0).to(self.device)  # (1, i, D)
-                        dtype = next(merger.parameters()).dtype
-                        with torch.no_grad():
-                            # Assume merger takes src embeddings; adjust if needs token inputs
-                            outputs = merger(src.to(dtype))
-                            if hasattr(outputs, 'pooler_output'):
-                                synth_emb = outputs.pooler_output.squeeze(0)
-                            elif hasattr(outputs, 'last_hidden_state'):
-                                synth_emb = outputs.last_hidden_state.squeeze(0).mean(dim=0)
-                            else:
-                                synth_emb = outputs.squeeze(0)
-                        synth_emb = synth_emb.cpu().to(torch.float32)
-                    else:  # native_mode
-                        synth_emb = torch.stack(partial_embs).to(self.device).mean(dim=0).cpu().to(torch.float32)
-                    synthesis_embeddings.append(synth_emb)
-                
-                num_synth_steps = len(synthesis_embeddings)
+
+            # Store for this length only if we have samples
+            if sample_results:
                 length_results[target_length] = {
-                    'probe_embeddings': probe_embeddings,
-                    'synthesis_embeddings': synthesis_embeddings,
-                    'num_synth_steps': num_synth_steps
-                }
-            else:
-                length_results[target_length] = {
-                    'probe_embeddings': probe_embeddings,
-                    'synthesis_embeddings': [],
-                    'num_synth_steps': 0
+                    'sample_results': sample_results,  # List of dicts, each with chunk and synth lists
+                    'num_synth_steps': target_length
                 }
 
         return {
@@ -229,32 +204,3 @@ class FinesseEvaluator:
                 'length_results': length_results
             }
         }
-
-    def run(self) -> Dict[str, Any]:
-        """Finesse 벤치마크 실행: Full mode with scoring (calls raw_run and computes scores)"""
-        raw_data = self.raw_run()
-        raw_results = raw_data['raw_results']
-        length_results = raw_results['length_results']
-        scored_results = {}
-        final_scores_per_length = {}
-        for target_length, raw in length_results.items():
-            probe_embeddings = raw['probe_embeddings']
-            synthesis_embeddings = raw['synthesis_embeddings']
-            num_synth_steps = raw['num_synth_steps']
-            num_probes = len(probe_embeddings)
-            if num_probes >= 2 and num_synth_steps > 0:
-                td_scores = calculate_self_attestation_scores(probe_embeddings, synthesis_embeddings)
-                bu_scores = calculate_self_attestation_scores_bottom_up(probe_embeddings, synthesis_embeddings, num_synth_steps)
-                avg_td = td_scores['contextual_coherence']
-                avg_bu = bu_scores['bottom_up_coherence']
-                imbalance = abs(avg_td - avg_bu)
-                final_score = ((avg_td + avg_bu) / 2) - imbalance
-                final_scores_per_length[target_length] = final_score
-            else:
-                final_scores_per_length[target_length] = 0.0
-        avg_rss = np.mean(list(final_scores_per_length.values()))
-        scored_results = {
-            'average_rss': avg_rss,
-            'length_scores': final_scores_per_length
-        }
-        return scored_results

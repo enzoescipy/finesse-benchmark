@@ -73,7 +73,7 @@ def calculate_self_attestation_scores(chunk_embeddings, synth_embeddings):
         'contextual_coherence': float(contextual_coherence)
     }
 
-def calculate_self_attestation_scores_bottom_up(chunk_embeddings, synth_embeddings, num_synth_steps):
+def calculate_self_attestation_scores_bottom_up(chunk_embeddings, synth_embeddings):
     """
     Calculate Bottom-Up self-attestation scores using Robust Separation Score.
     
@@ -89,7 +89,6 @@ def calculate_self_attestation_scores_bottom_up(chunk_embeddings, synth_embeddin
         chunk_embeddings: List[torch.Tensor] - Embeddings for all chunks, each (d_model,)
         synth_embeddings: List[torch.Tensor] - Embeddings for synthesis steps, each (d_model,)
         main_story_end: Number of story chunks (unused, for compatibility)
-        num_synth_steps: Number of synthesis steps (len(synth_embeddings))
         chunk_ids: List of chunk IDs (unused, for consistency)
     
     Returns:
@@ -106,11 +105,11 @@ def calculate_self_attestation_scores_bottom_up(chunk_embeddings, synth_embeddin
         dim=2
     ).cpu().numpy()
     
-    M_synth = num_synth_steps
+    M_synth = len(synth_embeddings)
 
     row_gaps = []
 
-    # Evaluate only middle chunks, excluding start (anchor_idx=0) and end (anchor_idx=num_synth_steps-1)
+    # Evaluate only middle chunks, excluding start (anchor_idx=0) and end (anchor_idx=M_synth-1)
     for anchor_idx in range(1, M_synth):  # Skip start and end anchors
         tier_for_synth = []
         for j in range(M_synth):
