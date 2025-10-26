@@ -213,13 +213,25 @@ def score_embeddings(
     # Compute model hash for notarization (before content_hash)
     try:
         config = BenchmarkConfig.model_validate(config_dict)
+        model_hash = None
+        
         if config.mode == 'merger_mode':
             model_path = config.models.merger.name
-        else:
+            model_hash = get_model_hash(model_path)
+            typer.echo(f"Model hash computed: {model_hash[:16]}... (for notarization)")
+        elif config.mode == 'native_mode':
             model_path = config.models.native_embedder.name
             model_hash = get_model_hash(model_path)
-            base_results['model_hash'] = model_hash
             typer.echo(f"Model hash computed: {model_hash[:16]}... (for notarization)")
+        elif config.mode == 'byok_mode':
+            # Diplomat Passport Protocol: Hash the identity string for BYOK models
+            provider = config.models.byok_embedder.provider
+            name = config.models.byok_embedder.name
+            hash_string = f"byok:{provider}:{name}"
+            model_hash = get_content_hash({'identity': hash_string})
+            typer.echo(f"BYOK model identity hash computed: {model_hash[:16]}... (for notarization)")
+        
+        base_results['model_hash'] = model_hash
     except Exception as e:
         typer.echo(f"Warning: Could not compute model hash: {e}")
         base_results['model_hash'] = None
@@ -341,7 +353,19 @@ def verify_integrity(
             
             stored_model_hash = data['model_hash']
             try:
-                computed_model_hash = get_model_hash(model_path)
+                # Determine the correct way to compute model hash based on config mode
+                config = BenchmarkConfig.model_validate(data['config'])
+                
+                if config.mode == 'byok_mode':
+                    # For BYOK mode, use the Diplomat Passport Protocol
+                    provider = config.models.byok_embedder.provider
+                    name = config.models.byok_embedder.name
+                    hash_string = f"byok:{provider}:{name}"
+                    computed_model_hash = get_content_hash({'identity': hash_string})
+                else:
+                    # For merger_mode and native_mode, use standard model hash
+                    computed_model_hash = get_model_hash(model_path)
+                
                 if computed_model_hash == stored_model_hash:
                     click.echo("✅ Model Provenance SUCCESS")
                     click.echo(f"Stored Model Hash: {stored_model_hash}")
@@ -355,7 +379,12 @@ def verify_integrity(
                 click.echo(f"❌ Model Provenance ERROR: {e}")
                 raise typer.Exit(code=1)
         else:
-            click.echo("ℹ️ Run with --model-path for full provenance verification.")
+            # Provide more helpful message based on config mode
+            config = BenchmarkConfig.model_validate(data['config'])
+            if config.mode == 'byok_mode':
+                click.echo("ℹ️ BYOK mode detected. Model provenance is based on provider/name identity.")
+            else:
+                click.echo("ℹ️ Run with --model-path for full provenance verification.")
     else:
         click.echo("❌ Content Verification FAILED")
         click.echo(f"Stored Content Hash: {stored_hash}")
