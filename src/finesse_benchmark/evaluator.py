@@ -1,107 +1,32 @@
 from typing import Dict, Any, Optional
 import torch
 from datasets import load_dataset
-from transformers import AutoModel, AutoTokenizer
 import numpy as np
 import litellm
 import typer
 import tiktoken
 import warnings
+from transformers import AutoTokenizer
 
 from .config import BenchmarkConfig
 from .scoring import calculate_self_attestation_scores, calculate_self_attestation_scores_bottom_up
+from .interfaces import FinesseEmbedder, FinesseSynthesizer
+
 
 class FinesseEvaluator:
-    def __init__(self, config: BenchmarkConfig):
+    def __init__(self, embedder_engine: FinesseEmbedder, synthesizer_engine: FinesseSynthesizer, config: BenchmarkConfig):
+        """
+        새로운 엔진 기반 아키텍처의 FinesseEvaluator.
+        더 이상 모델을 직접 로드하지 않고, 외부에서 주입된 엔진을 사용한다.
+        
+        Args:
+            embedder_engine: 임베딩을 담당하는 엔진 객체
+            synthesizer_engine: 합성을 담당하는 엔진 객체
+            config: 벤치마크 설정
+        """
         self.config = config
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.models = {}  # Dict to hold loaded models
-        self._load_models()
-
-    def _load_models(self):
-        """Load models based on config mode."""
-        models_cfg = self.config.models
-
-        # Common loading for embedders
-        def load_embedder(key: str):
-            model_name = getattr(models_cfg, key).name
-            tokenizer, model = self._load_embedder(model_name)
-            self.models[key] = {"tokenizer": tokenizer, "model": model}
-
-        if self.config.mode == "merger_mode":
-            # Load merger model
-            merger_name = models_cfg.merger.name
-            self.models["merger"] = AutoModel.from_pretrained(
-                merger_name,
-                trust_remote_code=True,
-                dtype=torch.float16 if torch.cuda.is_available() else torch.float32
-            ).to(self.device).eval()
-            
-            # Load base embedder
-            load_embedder("base_embedder")
-        
-        elif self.config.mode == "native_mode":
-            # Load native long-context embedder
-            load_embedder("native_embedder")
-
-        elif self.config.mode == "byok_mode":
-            # Load tokenizer for probe assembly using a default multilingual model (not used for individual beads)
-            tokenizer_path = "intfloat/multilingual-e5-base"
-            self.models["probe_tokenizer"] = AutoTokenizer.from_pretrained(tokenizer_path)
-        
-        else:
-            raise ValueError(f"Unsupported mode: {self.config.mode}")
-
-    def _load_embedder(self, model_path: str):
-        """Load embedder model and tokenizer from HF path."""
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
-        
-        model = AutoModel.from_pretrained(
-            model_path,
-            trust_remote_code=True,
-            dtype=torch.float16 if torch.cuda.is_available() else torch.float32
-        ).to(self.device).eval()
-        
-        return tokenizer, model
-
-    def _get_embedding(self, text: str, embedder_key: Optional[str] = None) -> torch.Tensor:
-        """Get embedding for text using the specified embedder."""
-        if self.config.mode == "byok_mode":
-            if self.config.models.byok_embedder is None:
-                raise ValueError("BYOK mode requires 'models.byok_embedder' configuration.")
-            provider = self.config.models.byok_embedder.provider
-            model_name = self.config.models.byok_embedder.name
-            litellm_model = f"{provider}/{model_name}"
-            response = litellm.embedding(model=litellm_model, input=[text])
-            embedding_list = response.data[0]['embedding']
-            embedding = torch.tensor(embedding_list, dtype=torch.float32)
-            embedding = torch.nn.functional.normalize(embedding.unsqueeze(0), p=2, dim=1).squeeze(0)
-            return embedding
-        else:
-            if embedder_key is None:
-                raise ValueError("Embedder key required for local embedding modes")
-            embedder = self.models[embedder_key]
-            tokenizer = embedder["tokenizer"]
-            model = embedder["model"]
-            
-            # Prefix based on model (e.g., "passage: " for E5)
-            prefix = "passage: " if "e5" in embedder_key.lower() else ""
-            input_text = prefix + text
-            
-            inputs = tokenizer(
-                [input_text],
-                max_length=512,  # Adjust based on model
-                padding=True,
-                truncation=True,
-                return_tensors="pt"
-            ).to(self.device)
-            
-            with torch.no_grad():
-                outputs = model(**inputs)
-                embedding = outputs.last_hidden_state.mean(dim=1)  # Universal mean pooling for all AutoModels
-            
-            embedding = torch.nn.functional.normalize(embedding, p=2, dim=1).squeeze(0)
-            return embedding.cpu().to(torch.float32)
+        self.embedder = embedder_engine
+        self.synthesizer = synthesizer_engine
 
     def raw_run(self) -> Dict[str, Any]:
         """Finesse 벤치마크 실행: Stratified CSAT with Single-Pass Conveyor Belt (Raw mode - embeddings only)"""
@@ -125,16 +50,6 @@ class FinesseEvaluator:
         if len(dataset) < total_needed_samples:
             raise ValueError(f"데이터셋 크기({len(dataset)})가 필요 샘플({total_needed_samples})보다 작음. 더 많은 데이터 필요.")
 
-        # Dynamically determine the embedder key or None for BYOK
-        if self.config.mode == 'byok_mode':
-            embedder_key = None
-        elif self.config.mode == 'merger_mode':
-            embedder_key = 'base_embedder'
-        elif self.config.mode == 'native_mode':
-            embedder_key = 'native_embedder'
-        else:
-            raise ValueError(f"Unsupported mode: {self.config.mode}")
-
         length_results = {}  # 길이별 결과 저장: {'sample_results': [dicts], 'num_synth_steps': N}
         for target_length in range(min_length, max_length + 1):
             typer.echo(f"probe sequence [{target_length}] in progress ...")
@@ -149,110 +64,61 @@ class FinesseEvaluator:
                         # Skip if not enough beads
                         continue
 
-                    # New chunk generation: thread beads together to reach target token size
+                    # Intelligent tailor logic: thread beads and precisely cut to reach target token size
                     chunk_texts = []
                     current_chunk = []
                     current_token_count = 0
-                    
-                    # Diplomat Protocol: Token counter selection logic
-                    token_counter = None
-                    
-                    if self.config.mode == 'byok_mode':
-                        provider = self.config.models.byok_embedder.provider
-                        model_name = self.config.models.byok_embedder.name
-                        
-                        # 1. De Facto Standardization: Use tiktoken for OpenAI models
-                        if provider == 'openai':
-                            try:
-                                encoding = tiktoken.encoding_for_model(model_name)
-                                token_counter = lambda text: len(encoding.encode(text))
-                                typer.echo(f"INFO: Using tiktoken for OpenAI model: {model_name}")
-                            except KeyError:
-                                warnings.warn(f"tiktoken encoding for {model_name} not found. Defaulting to general-purpose tokenizer. Token counts may be inaccurate.")
-                        
-                        # 2. Delegation of Autonomy: Use user-specified tokenizer
-                        if token_counter is None and self.config.models.byok_embedder.tokenizer_path:
-                            path = self.config.models.byok_embedder.tokenizer_path
-                            typer.echo(f"INFO: Using user-specified tokenizer: {path}")
-                            user_tokenizer = AutoTokenizer.from_pretrained(path)
-                            token_counter = lambda text: len(user_tokenizer.encode(text, add_special_tokens=False))
-                        
-                        # 3. Fallback with clear warning
-                        if token_counter is None:
-                            warnings.warn(f"BYOK provider '{provider}' is not OpenAI and no 'tokenizer_path' was provided. Falling back to default tokenizer. TOKEN COUNTS WILL BE INACCURATE.")
-                            default_tokenizer = self.models['probe_tokenizer']
-                            token_counter = lambda text: len(default_tokenizer.encode(text, add_special_tokens=False))
-                    
-                    elif self.config.mode == 'merger_mode':
-                        tokenizer = self.models['base_embedder']['tokenizer']
-                        token_counter = lambda text: len(tokenizer.encode(text, add_special_tokens=False))
-                    
-                    else:  # native_mode
-                        tokenizer = self.models['native_embedder']['tokenizer']
-                        token_counter = lambda text: len(tokenizer.encode(text, add_special_tokens=False))
-                    
-                    target_token_size = self.config.probe_config.token_per_sample
-                    
+                    target_token_size = self.config.probe_config.token_per_sample 
+
                     for bead_text in beads:
-                        # Use the token counter function
-                        bead_token_count = token_counter(bead_text)
-                        
-                        # If adding this bead would exceed target, finalize current chunk
-                        if current_token_count + bead_token_count > target_token_size and current_chunk:
-                            # Finalize current chunk
+                        # Count tokens for this bead using the embedder's tokenizer
+                        bead_token_count = self.embedder.count_tokens(bead_text)
+
+                        # Check if adding this bead would exceed target
+                        if current_token_count + bead_token_count > target_token_size:
+                            # Calculate how many tokens we need to complete the current chunk
+                            tokens_needed = target_token_size - current_token_count
+                            
+                            if tokens_needed > 0:
+                                # Use the embedder's scissors to cut exactly what we need
+                                needed_text = self.embedder.chunk_text(bead_text, tokens_needed)
+                                current_chunk.append(needed_text)
+                            
+                            # Finalize the perfectly sized chunk
                             chunk_texts.append(' '.join(current_chunk))
                             current_chunk = []
                             current_token_count = 0
+                            
+                            # The remaining part of the bead is discarded
+                            # We move to the next bead to start a new chunk
+                            continue
                         
-                        # Add bead to current chunk
+                        # Add bead to current chunk (it fits perfectly)
                         current_chunk.append(bead_text)
                         current_token_count += bead_token_count
                         
-                        # If we've reached or exceeded target, finalize chunk
-                        if current_token_count >= target_token_size:
-                            chunk_texts.append(' '.join(current_chunk))
-                            current_chunk = []
-                            current_token_count = 0
-                        
-                        # Stop if we have enough chunks for target_length
+                        # If we have enough chunks, break early
                         if len(chunk_texts) >= target_length:
                             break
                     
-                    # Handle any remaining partial chunk
+                    # Handle any remaining partial chunk at the end
                     if current_chunk and len(chunk_texts) < target_length:
+                        # Finalize the partial chunk as-is
                         chunk_texts.append(' '.join(current_chunk))
                     
                     # If we don't have enough chunks, skip this sample
                     if len(chunk_texts) < target_length:
                         continue
                     
-                    # Embed the chunks
-                    chunk_embeddings = [
-                        self._get_embedding(chunk_text, embedder_key) for chunk_text in chunk_texts[:target_length]
-                    ]  # List of N 1D Tensors
+                    # Embed the chunks using our new embedder engine
+                    chunk_embeddings_tensor = self.embedder.encode(chunk_texts[:target_length])
+                    chunk_embeddings = [chunk_embeddings_tensor[i] for i in range(chunk_embeddings_tensor.size(0))]
 
                     # Synthesis embeddings: cumulative synthesis using partial chunk stacks
                     synthesis_embeddings = []
                     for i in range(1, target_length + 1):
-                        partial_embs = chunk_embeddings[:i]
-                        if self.config.mode == 'merger_mode':
-                            merger = self.models['merger'].to(self.device).eval()
-                            src = torch.stack(partial_embs).unsqueeze(0).to(self.device)  # (1, i, D)
-                            dtype = next(merger.parameters()).dtype
-                            with torch.no_grad():
-                                outputs = merger(src.to(dtype))
-                                if hasattr(outputs, 'pooler_output'):
-                                    synth_emb = outputs.pooler_output.squeeze(0)
-                                elif hasattr(outputs, 'last_hidden_state'):
-                                    synth_emb = outputs.last_hidden_state.squeeze(0).mean(dim=0)
-                                else:
-                                    synth_emb = outputs[0].squeeze(0) if isinstance(outputs, tuple) else outputs.squeeze(0)
-                            synth_emb = synth_emb.cpu().to(torch.float32)
-                        else:  # native_mode or fallback: mean pooling
-                            synth_emb = torch.stack(partial_embs).mean(dim=0).cpu().to(torch.float32)
-                        
-                        # Normalize
-                        synth_emb = torch.nn.functional.normalize(synth_emb, p=2, dim=0)
+                        partial_embs = torch.stack(chunk_embeddings[:i]).unsqueeze(0)  # (1, i, D)
+                        synth_emb = self.synthesizer.synthesize(partial_embs).squeeze(0)
                         synthesis_embeddings.append(synth_emb)
 
                     # Package this sample's results
@@ -282,3 +148,38 @@ class FinesseEvaluator:
                 'length_results': length_results
             }
         }
+
+    def _setup_token_counter(self):
+        """모드에 따라 적절한 토큰 카운터를 설정한다."""
+        if self.config.mode == 'byok_mode':
+            if self.config.models.byok_embedder is None:
+                raise ValueError("BYOK mode requires 'models.byok_embedder' configuration.")
+            
+            provider = self.config.models.byok_embedder.provider
+            model_name = self.config.models.byok_embedder.name
+            
+            # 1. De Facto Standardization: Use tiktoken for OpenAI models
+            if provider == 'openai':
+                try:
+                    encoding = tiktoken.encoding_for_model(model_name)
+                    return lambda text: len(encoding.encode(text))
+                except KeyError:
+                    warnings.warn(f"tiktoken encoding for {model_name} not found. Defaulting to general-purpose tokenizer.")
+            
+            # 2. Delegation of Autonomy: Use user-specified tokenizer
+            if self.config.models.byok_embedder.tokenizer_path:
+                tokenizer_path = self.config.models.byok_embedder.tokenizer_path
+                tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+                return lambda text: len(tokenizer.encode(text, add_special_tokens=False))
+            
+            # 3. Fallback with clear warning
+            warnings.warn(f"BYOK provider '{provider}' is not OpenAI and no 'tokenizer_path' was provided. Falling back to default tokenizer.")
+            fallback_tokenizer = AutoTokenizer.from_pretrained("intfloat/multilingual-e5-base")
+            return lambda text: len(fallback_tokenizer.encode(text, add_special_tokens=False))
+        
+        else:  # merger_mode or native_mode
+            # For local models, we need to use the embedder's tokenizer
+            # But since we don't have direct access to the tokenizer anymore,
+            # we'll use a default multilingual tokenizer as fallback
+            fallback_tokenizer = AutoTokenizer.from_pretrained("intfloat/multilingual-e5-base")
+            return lambda text: len(fallback_tokenizer.encode(text, add_special_tokens=False))

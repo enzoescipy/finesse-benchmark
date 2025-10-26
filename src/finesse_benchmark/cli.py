@@ -93,9 +93,51 @@ def generate_raw_data(
     # Create output dir
     os.makedirs(output_dir, exist_ok=True)
 
-    # Init Evaluator
+    # Init Evaluator with proper engine injection based on mode
     typer.echo("Initializing FinesseEvaluator...")
-    evaluator = FinesseEvaluator(config)
+    
+    # Import the engine implementations
+    from .implementations import HuggingFaceEmbedder, ByokEmbedder, SequenceMergerSynthesizer, PassThroughSynthesizer
+    
+    # Initialize embedder and synthesizer based on mode
+    if config.mode == 'merger_mode':
+        typer.echo("  Mode: merger_mode")
+        # Use base embedder for embedding and sequence merger for synthesis
+        embedder = HuggingFaceEmbedder(config.models.base_embedder.name)
+        synthesizer = SequenceMergerSynthesizer(config.models.merger.name, embedder)
+        typer.echo(f"  Embedder: {config.models.base_embedder.name}")
+        typer.echo(f"  Synthesizer: {config.models.merger.name}")
+    
+    elif config.mode == 'native_mode':
+        typer.echo("  Mode: native_mode")
+        # Use native embedder for both embedding and synthesis (pass-through)
+        embedder = HuggingFaceEmbedder(config.models.native_embedder.name)
+        synthesizer = PassThroughSynthesizer()
+        typer.echo(f"  Embedder: {config.models.native_embedder.name}")
+        typer.echo("  Synthesizer: pass-through")
+    
+    elif config.mode == 'byok_mode':
+        typer.echo("  Mode: byok_mode")
+        if not config.models.byok_embedder:
+            typer.echo("❌ Error: BYOK mode requires 'models.byok_embedder' configuration.")
+            raise typer.Exit(code=1)
+        
+        # Use BYOK embedder for embedding and pass-through for synthesis
+        embedder = ByokEmbedder(
+            provider=config.models.byok_embedder.provider,
+            model_name=config.models.byok_embedder.name,
+            tokenizer_path=config.models.byok_embedder.tokenizer_path
+        )
+        synthesizer = PassThroughSynthesizer()
+        typer.echo(f"  Embedder: {config.models.byok_embedder.provider}/{config.models.byok_embedder.name}")
+        typer.echo("  Synthesizer: pass-through")
+    
+    else:
+        typer.echo(f"❌ Error: Unknown mode '{config.mode}'")
+        raise typer.Exit(code=1)
+    
+    # Initialize evaluator with the engines
+    evaluator = FinesseEvaluator(embedder_engine=embedder, synthesizer_engine=synthesizer, config=config)
 
     # Run raw evaluation
     typer.echo("Generating raw embeddings...")
