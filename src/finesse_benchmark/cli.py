@@ -80,10 +80,9 @@ def generate_raw_data(
     
     # Validate sequence lengths - minimum length must be 4 for valid scoring
     sequence_length_min = config.probe_config.sequence_length.min
-    invalid_lengths = [length for length in sequence_length_min if length < 4]
     
-    if invalid_lengths:
-        typer.echo(f"❌ Error: Invalid sequence lengths found: {invalid_lengths}")
+    if sequence_length_min < 4:
+        typer.echo(f"❌ Error: Invalid sequence lengths minimum: {sequence_length_min}")
         typer.echo("   Minimum sequence length must be 4 for valid scoring.")
         typer.echo("   For lengths < 4, the scoring system cannot properly evaluate")
         typer.echo("   contextual coherence and bottom-up coherence.")
