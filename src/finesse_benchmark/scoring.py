@@ -22,8 +22,9 @@ def calculate_self_attestation_scores(chunk_embeddings, synth_embeddings):
         Dictionary with 'contextual_coherence' score (average robust gaps)
     """
     # Stack embeddings
-    chunk_emb_tensor = torch.stack(chunk_embeddings)  # (M, d_model)
-    synth_emb_tensor = torch.stack(synth_embeddings)  # (N, d_model)
+    device = chunk_embeddings[0].device
+    chunk_emb_tensor = torch.stack([t.to(device) for t in chunk_embeddings])  # (M, d_model)
+    synth_emb_tensor = torch.stack([t.to(device) for t in synth_embeddings])  # (N, d_model)
     
     # Compute similarity matrix (N_synth, M_chunks)
     sim_matrix = F.cosine_similarity(
@@ -95,8 +96,9 @@ def calculate_self_attestation_scores_bottom_up(chunk_embeddings, synth_embeddin
         Dict with 'bottom_up_coherence' (average robust gaps over anchors)
     """
     # Stack embeddings
-    chunk_emb_tensor = torch.stack(chunk_embeddings)  # (M, d_model)
-    synth_emb_tensor = torch.stack(synth_embeddings)  # (N, d_model)
+    device = chunk_embeddings[0].device
+    chunk_emb_tensor = torch.stack([t.to(device) for t in chunk_embeddings])  # (M, d_model)
+    synth_emb_tensor = torch.stack([t.to(device) for t in synth_embeddings])  # (N, d_model)
     
     # Compute similarity matrix for bottom-up: (M_chunks, N_synth)
     sim_bottom_up = F.cosine_similarity(

@@ -123,13 +123,14 @@ class FinesseEvaluator:
                 
                 # 청크들 임베딩
                 chunk_embeddings_tensor = self.embedder.encode(chunk_texts)
-                chunk_embeddings = [chunk_embeddings_tensor[i] for i in range(chunk_embeddings_tensor.size(0))]
+                chunk_embeddings = [chunk_embeddings_tensor[i].cpu() for i in range(chunk_embeddings_tensor.size(0))]
                 
                 # 누적 합성 수행: A, AB, ABC, ..., ABCDEFG
                 synthesis_embeddings = []
                 for i in range(1, target_length + 1):
                     partial_embs = torch.stack(chunk_embeddings[:i]).unsqueeze(0)  # (1, i, D)
                     synth_emb = self.synthesizer.synthesize(partial_embs).squeeze(0)
+                    synth_emb = synth_emb.cpu()
 
                     # Validate synthesizer output: must be 1D tensor (d_model,)
                     if synth_emb.dim() != 1:
