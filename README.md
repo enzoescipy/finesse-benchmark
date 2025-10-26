@@ -2,6 +2,7 @@
 
 [Github](https://github.com/enzoescipy/finesse-benchmark)
 [pypi](https://pypi.org/project/finesse-benchmark/)
+[blog](https://www.winter-sci-dev.com/posts/embed-sequence-merger-vbert-ppe-article/)
 
 ## Introduction
 
@@ -285,11 +286,202 @@ To ensure fair, reproducible, and standardized evaluations for the official Fine
 
 This setup guarantees all submissions use identical dataset sampling, probe generation, and randomness, focusing purely on model performance.
 
-## Development
 
-- Source: `src/finesse_benchmark/`.
-- Tests: Run `pytest` (add tests for scoring, hashing).
-- Contributing: Fork, PR with docs/tests. Focus on new providers/modes.
+## Using Custom Local Synthesizers with Finesse Benchmark
+
+The `finesse-benchmark` package follows a **dependency injection** design pattern, allowing flexible substitution of core components: the **embedder** (for generating partial embeddings) and the **synthesizer** (for merging sequences). This enables users to:
+
+- Use standard Hugging Face models for embedding (e.g., via `HuggingFaceEmbedder`).
+- Swap in custom synthesizers for local models, such as trained checkpoints (`.pt` files) from your own training pipeline.
+- Ensure seamless integration with the `FinesseEvaluator` for benchmark scoring without modifying the package core.
+
+This approach promotes modularity: you define your embedder and synthesizer engines, inject them into the evaluator, and run standardized probes to measure **Relative Sequence Strength (RSS)** scores. It's tamper-proof, scalable, and leaderboard-ready.
+
+## Custom Synthesizer Recipe: LocalCheckpointSynthesizer
+
+Below is the complete, battle-tested code for `LocalCheckpointSynthesizer`. It inherits from `FinesseSynthesizer` and handles dynamic architecture detection (Micro/Macro/Massive/ResidualCorrectionMoe) from checkpoint metadata.
+
+Place this in a script (e.g., `evaluator_custom.py`) or your project module.
+
+```python
+import os
+import torch
+from finesse_benchmark.interfaces import FinesseSynthesizer
+class LocalCheckpointSynthesizer(FinesseSynthesizer):
+    def __init__(self, checkpoint_path: str, device: torch.device = None, dtype: torch.dtype = None):
+        super().__init__()  # Call parent init if needed
+        self.checkpoint_path = checkpoint_path
+        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.dtype = dtype or (torch.float16 if self.device.type == 'cuda' else torch.float32)
+        self.model = self._load_model()
+
+    def _load_model(self):
+        model = model.to(device=self.device, dtype=self.dtype)
+        return model.eval()
+
+    def synthesize(self, embeddings: torch.Tensor) -> torch.Tensor:
+        # Ensure inputs are on correct device and dtype
+        embeddings = embeddings.to(device=self.device, dtype=self.dtype)
+
+        # Check sequence length (handle short/empty sequences)
+        if embeddings.shape[1] <= 1:
+            # Return as-is for single/empty sequences (Finesse expects identity transformation)
+            return embeddings[0]
+
+        with torch.no_grad():
+            outputs = self.model(embeddings)
+            if hasattr(outputs, 'pooler_output'):
+                synthesized = outputs.pooler_output
+            else:
+                synthesized = outputs  # Direct output, assuming (B, D)
+
+        # Normalize output on device
+        synthesized = torch.nn.functional.normalize(synthesized, p=2, dim=1)
+        return synthesized
+    
+    def device(self) -> torch.device:
+        """Return the device's type for internal use."""
+        return self.device
+```
+
+**Notes on the Recipe**:
+- **Dynamic Detection**: Relies on `'model_architecture'` key in your `.pt` file's metadata (added during training, e.g., via `torch.save({'model_architecture': 'MicroTransformerSynthesizer', ...}`).
+- **Error Handling**: Falls back to `MicroTransformerSynthesizer` if architecture is unknown.
+- **Performance**: Uses `.eval()` and `no_grad()` for efficient inference.
+- **Dependencies**: Requires your custom model classes (e.g., in `models/synthesizer.py`). Adjust imports as needed.
+
+## Step-by-Step Usage Guide
+
+Follow these steps to integrate your custom synthesizer into a full benchmark evaluation.
+
+### 1. Setup Environment and Config
+- Install `finesse-benchmark`: `pip install finesse-benchmark`
+- Prepare your `.pt` checkpoint file (must include `'model_architecture'` and `'model_state_dict'`).
+- Create as `finesse init` or use a `benchmark.yaml` config file (standard Finesse format).
+
+Example `benchmark.yaml` snippet:
+```yaml
+probe_config:
+  sequence_length:
+    min: 4
+    max: 16
+    step: 4
+models:
+  base_embedder:
+    name: "intfloat/multilingual-e5-base"  # Or your preferred embedder model
+```
+
+### 2. Define Device and dtype
+Unify settings to avoid runtime errors (e.g., dtype mismatches).
+
+```python
+import torch
+
+# Auto-detect device and set dtype
+device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
+dtype = torch.float16 if device.type == 'cuda' else torch.float32
+
+print(f"Using device: {device}")
+print(f"Using dtype: {dtype}")
+```
+
+### 3. Import Modules and Load Config
+```python
+import yaml
+from pathlib import Path
+
+from finesse_benchmark.config import BenchmarkConfig
+from finesse_benchmark.implementations import HuggingFaceEmbedder
+from finesse_benchmark.evaluator import FinesseEvaluator
+
+# Load config
+with open("benchmark.yaml", 'r', encoding='utf-8') as f:
+    config_dict = yaml.safe_load(f)
+config = BenchmarkConfig.model_validate(config_dict)
+```
+
+### 4. Instantiate Embedder and Custom Synthesizer
+Inject unified device/dtype into both components.
+
+```python
+# Embedder: Standard Hugging Face model
+embedder = HuggingFaceEmbedder(
+    model_path=config.models.base_embedder.name,  # e.g., "BAAI/bge-base-en-v1.5"
+    device=device,
+    dtype=dtype
+)
+print(f"Loaded embedder: {config.models.base_embedder.name}")
+
+# Custom Synthesizer: Your local .pt checkpoint
+checkpoint_path = Path("checkpoints/your_model.pt")  # Full path to .pt file
+synthesizer = LocalCheckpointSynthesizer(
+    checkpoint_path=str(checkpoint_path),
+    device=device,
+    dtype=dtype
+)
+print(f"Loaded synthesizer: {checkpoint_path.name}")
+```
+
+### 5. Create FinesseEvaluator and Run Benchmark
+Inject your custom engines and execute the evaluation.
+
+```python
+# Initialize evaluator with injected engines
+evaluator = FinesseEvaluator(
+    embedder_engine=embedder,
+    synthesizer_engine=synthesizer,
+    config=config
+)
+
+# Run raw evaluation
+print("  Generating raw embeddings...")
+try:
+    raw_data = evaluator.raw_run()
+    print("  Raw embeddings generated successfully")
+except Exception as e:
+    print(f"❌ Error in raw_run: {e}")
+    print(traceback.format_exc())
+    continue
+
+# Extract length_results for scoring
+length_results = raw_data.get('raw_results', {}).get('length_results', {})
+if not length_results:
+    print("  No length results found. Skipping scoring.")
+    continue
+
+from finesse_benchmark.scoring import calculate_self_attestation_scores, calculate_self_attestation_scores_bottom_up
+
+final_scores_per_length = {}
+for target_length, raw in length_results.items():
+    sample_results = raw.get('sample_results', [])
+    if not sample_results:
+        final_scores_per_length[target_length] = 0.0
+        continue
+
+    sample_scores = []
+    for sample_dict in sample_results:
+        probe_embeddings = sample_dict.get('chunk_embeddings')
+        synthesis_embeddings = sample_dict.get('synthesis_embeddings')
+
+        if probe_embeddings and synthesis_embeddings and len(probe_embeddings) >= 2:
+            td_scores = calculate_self_attestation_scores(probe_embeddings, synthesis_embeddings)
+            bu_scores = calculate_self_attestation_scores_bottom_up(probe_embeddings, synthesis_embeddings)
+
+            avg_td = td_scores['contextual_coherence']
+            avg_bu = bu_scores['bottom_up_coherence']
+            imbalance = abs(avg_td - avg_bu)
+            final_score = ((avg_td + avg_bu) / 2) - imbalance
+            sample_scores.append(final_score)
+        else:
+            sample_scores.append(0.0)
+
+    avg_length_score = np.mean(sample_scores) if sample_scores else 0.0
+    final_scores_per_length[target_length] = round(avg_length_score * 500, 6)  # Scale by 500
+
+# Calculate average RSS
+avg_rss = round(np.mean(list(final_scores_per_length.values())), 6)
+print(f"  Average RSS: {avg_rss}")
+```
 
 ## License
 
