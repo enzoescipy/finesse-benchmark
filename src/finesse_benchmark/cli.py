@@ -7,6 +7,7 @@ import torch
 import numpy as np
 import click
 import traceback
+from importlib import resources
 from .utils import get_content_hash, get_model_hash
 from typing import Dict, List
 from .config import BenchmarkConfig
@@ -516,120 +517,43 @@ def init_config(
     - Validate: Run 'finesse init --leaderboard' again or manually with Pydantic to check syntax.
     - Use in 'generate': Pass as --config to start evaluation.
     """
-    if leaderboard:
-        leaderboard_path = "benchmark.leaderboard.yaml"
-        if not os.path.exists(leaderboard_path):
-            typer.echo(f"Error: leaderboard config not found: {leaderboard_path}")
-            raise typer.Exit(code=1)
-        with open(leaderboard_path, 'r', encoding='utf-8') as f:
-            content = f.read()
+    try:
+        if leaderboard:
+            resource_file = 'benchmark.leaderboard.yaml'
+            typer.echo(f"Loading leaderboard config from package: {resource_file}")
+            with resources.open_text('finesse_benchmark', resource_file) as f:
+                content = f.read()
+            typer.echo(f"Leaderboard benchmark.yaml generated at: {output_path}")
+        else:
+            resource_file = 'benchmark.default.yaml'
+            typer.echo(f"Loading default config from package: {resource_file}")
+            with resources.open_text('finesse_benchmark', resource_file) as f:
+                content = f.read()
+            typer.echo(f"Default benchmark.yaml generated at: {output_path}")
+        
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(content)
-        typer.echo(f"Leaderboard benchmark.yaml generated at: {output_path}")
 
         # Validate the copied config
         try:
             with open(output_path, "r", encoding='utf-8') as f:
                 yaml_data = yaml.safe_load(f)
             config = BenchmarkConfig.model_validate(yaml_data)
-            typer.echo("Leaderboard config validated successfully with BenchmarkConfig.")
+            if leaderboard:
+                typer.echo("Leaderboard config validated successfully with BenchmarkConfig.")
+            else:
+                typer.echo("YAML template validated successfully with BenchmarkConfig.")
+                typer.echo("Edit the file to customize models, modes, and settings.")
         except Exception as e:
-            typer.echo(f"Error: Leaderboard YAML is invalid - {e}")
+            typer.echo(f"Error: Generated YAML is invalid - {e}")
             if os.path.exists(output_path):
                 os.remove(output_path)
             raise typer.Exit(code=1)
-        return
-
-    template = '''# Finesse Benchmark Configuration
-# This file configures the benchmark modes, models, probe settings, etc.
-# For merger_mode: Use sequence-merger with a base embedder.
-# For native_mode: Use a long-context native embedder directly.
-
-mode: "merger_mode"  # Options: "merger_mode", "native_mode", or "byok_mode"
-
-# Models Configuration
-models:
-  # Used only in merger_mode
-  merger:
-    # Hugging Face model name or local path for Sequence Merger
-    name: "enzoescipy/sequence-merger-malgeum"
-  # merger_mode: base embedder for probes, native_mode: the main long-context embedder
-  base_embedder:
-    # e.g., multilingual-e5-base for merger, or longformer-base-4096 for native
-    name: "intfloat/multilingual-e5-base"
-  # Used only in native_mode (if separate)
-  native_embedder:
-    # e.g., "Snowflake/snowflake-arctic-embed-l-v2.0"
-    name: "Snowflake/snowflake-arctic-embed-l-v2.0"
-
-  # [BYOK Mode Example - Uncomment and edit for BYOK usage]
-  # For byok_mode: Specify the API provider and model name for litellm
-  # byok_embedder:
-  #   provider: "openai"  # e.g., 'openai', 'cohere', 'google'
-  #   name: "text-embedding-3-large"  # Provider-specific model name
-  #   tokenizer_path: null  # Optional: Hugging Face tokenizer path for accurate token counting
-  #                        # e.g., 'Cohere/cohere-tokenizer-fast' for Cohere models
-  #                        # If null, system will use tiktoken for OpenAI or fallback with warning
-  #
-  # IMPORTANT: API keys MUST be set as environment variables for security.
-  # Do NOT store keys in this YAML file or commit them to version control.
-  # Examples (set in your terminal before running):
-  #
-  # For OpenAI:
-  #   export OPENAI_API_KEY="sk-your-key-here"  # Linux/macOS
-  #   $env:OPENAI_API_KEY="sk-your-key-here"  # Windows PowerShell
-  #
-  # For Cohere:
-  #   export COHERE_API_KEY="your-cohere-key-here"
-  #
-  # For Google:
-  #   export GOOGLE_API_KEY="your-google-key-here"
-  #
-  # Tokenizer Recommendations:
-  # - OpenAI models: Leave tokenizer_path null (uses tiktoken automatically)
-  # - Cohere models: Set tokenizer_path: "Cohere/cohere-tokenizer-fast"
-  # - Google models: Set tokenizer_path: "google-bert/bert-base-uncased" or similar
-  #
-  # litellm will automatically detect and use the appropriate environment variable
-  # based on the 'provider' you specify. This ensures your keys remain secure.
-
-# Dataset Configuration
-dataset:
-  path: "enzoescipy/finesse-benchmark-database"  # HF dataset path
-  split: "train"  # Split to use
-
-# Probe Configuration
-probe_config:
-  sequence_length:
-    min: 5  # Minimum sequence length in tokens
-    max: 16  # Maximum sequence length in tokens
-  samples_per_length: 1  # Evaluations per length
-  token_per_sample : 256  # Number of tokens per chunk
-
-# Advanced Settings
-advanced: {}
-  # batch_size: 8
-  # device: "cuda"
-
-# Seed for Reproducibility
-seed: 42  # Default seed for dataset shuffling
-'''
-
-    with open(output_path, 'w', encoding='utf-8') as f:
-        f.write(template)
-
-    # Self-validate the generated config
-    try:
-        with open(output_path, "r", encoding='utf-8') as f:
-            yaml_data = yaml.safe_load(f)
-        config = BenchmarkConfig.model_validate(yaml_data)
-        typer.echo(f"Default benchmark.yaml generated at: {output_path}")
-        typer.echo("YAML template validated successfully with BenchmarkConfig.")
-        typer.echo("Edit the file to customize models, modes, and settings.")
+    except FileNotFoundError:
+        typer.echo(f"Error: Package resource not found: {resource_file}. Ensure it exists in the finesse_benchmark package.")
+        raise typer.Exit(code=1)
     except Exception as e:
-        typer.echo(f"Error: Generated YAML is invalid - {e}")
-        if os.path.exists(output_path):
-            os.remove(output_path)
+        typer.echo(f"Error loading config from package: {e}")
         raise typer.Exit(code=1)
 
 @app.command("inspect")
