@@ -15,7 +15,7 @@ dependencies = [
     "click==8.1.3",
 
     # free-to-charge
-    "transformers~=4.5.0",
+    "transformers~=4.50.0",
     "seaborn~=0.13.0",
     "typer~=0.20.0",
     "litellm~=1.78.0",
