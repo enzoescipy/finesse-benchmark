@@ -1,25 +1,26 @@
 [project]
 name = "finesse-benchmark"
-version = "0.5.0"
+version = "0.6.0"
 description = "sophisticated evaluation framework designed to assess the performance of long-context embedding models on semantic understanding and information retention"
 authors = [{ name = "winter.sci.dev", email = "enzoescipy@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.10,<3.15"
+dependencies = [
+    "pydantic~=2.12.0",
+    "torch~=2.9.0",
+    "datasets~=4.3.0",
+    "transformers~=4.57.0",
+    "seaborn~=0.13.0",
+    "typer~=0.20.0",
+    "litellm~=1.78.0",
+    "matplotlib~=3.10.0",
+    "click~=8.3.0",
+    "tiktoken~=0.12.0"
+]
+
 
 [tool.poetry]
 packages = [{ include = "finesse_benchmark", from = "src" }]
-
-[tool.poetry.dependencies]
-pydantic = "^2.12.3"
-torch = "^2.9.0"
-datasets = "^4.3.0"
-transformers = "^4.57.1"
-seaborn = "^0.13.2"
-typer = "^0.20.0"
-litellm ="^1.78.7"
-matplotlib ="^3.10.7"
-click = "^8.3.0"
-tiktoken = "^0.12.0"
 
 [tool.poetry.scripts]
 finesse = "finesse_benchmark.cli:app"
