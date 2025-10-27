@@ -11,7 +11,7 @@ from .utils import get_content_hash, get_model_hash
 from typing import Dict, List
 from .config import BenchmarkConfig
 from .evaluator import FinesseEvaluator
-from .scoring import calculate_self_attestation_scores, calculate_self_attestation_scores_bottom_up
+from .scoring import calculate_self_attestation_scores, calculate_self_attestation_scores_bottom_up, calculate_sample_latency
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -200,7 +200,7 @@ def score_embeddings(
         typer.echo(f"Error: Input .pt file not found: {pt_path}")
         raise typer.Exit(code=1)
     
-    raw_data = torch.load(pt_path)
+    raw_data = torch.load(pt_path, weights_only=False)
     config_dict = raw_data['config']
     metadata = raw_data.get('metadata', {})
     length_results = raw_data.get('raw_results', {}).get('length_results', {})
@@ -211,9 +211,16 @@ def score_embeddings(
     
     length_scores = {}
     all_individual_scores = []
+    all_total_latencies = []
+    all_synthesis_latencies = []
+    mode = config_dict.get('mode')
+    
     for target_length, raw in length_results.items():
         sample_results = raw.get('sample_results', [])
         sample_scores = []
+        total_latency_list = []
+        synthesis_latency_list = []
+        
         for sample_dict in sample_results:
             probe_embeddings = sample_dict.get('chunk_embeddings')
             synthesis_embeddings = sample_dict.get('synthesis_embeddings')
@@ -229,22 +236,53 @@ def score_embeddings(
                 sample_scores.append(final_score)
             else:
                 sample_scores.append(0.0)
+            
+            # Calculate latencies for this sample
+            chunk_times = sample_dict.get('chunk_times', None)
+            synth_times = sample_dict.get('synth_times', [])
+            if mode and synth_times:
+                try:
+                    latency_dict = calculate_sample_latency(mode, chunk_times, synth_times)
+                    total_latency_list.append(latency_dict['total_latency'])
+                    synthesis_latency_list.append(latency_dict['synthesis_latency'])
+                except Exception as e:
+                    # Fallback for invalid data
+                    total_latency_list.append(0.0)
+                    synthesis_latency_list.append(0.0)
+            else:
+                total_latency_list.append(0.0)
+                synthesis_latency_list.append(0.0)
 
-        # Store scaled and rounded individual scores as list
-        scaled_scores = [round(score * 500, 6) for score in sample_scores]
-        length_scores[target_length] = scaled_scores
-        all_individual_scores.extend(scaled_scores)
+        # Store scaled RSS and rounded latency scores as lists
+        scaled_rss = [round(score * 500, 6) for score in sample_scores]
+        scaled_total = [round(t, 6) for t in total_latency_list]
+        scaled_synth = [round(s, 6) for s in synthesis_latency_list]
+        
+        length_scores[target_length] = {
+            'rss_scores': scaled_rss,
+            'total_latency_scores': scaled_total,  # ms, cold start
+            'synthesis_latency_scores': scaled_synth  # ms, warm start
+        }
+        all_individual_scores.extend(scaled_rss)
+        all_total_latencies.extend(scaled_total)
+        all_synthesis_latencies.extend(scaled_synth)
 
-    # Average RSS is mean of all individual scaled scores
+    # Averages
     avg_rss = np.mean(all_individual_scores) if all_individual_scores else 0.0
     avg_rss = round(avg_rss, 6)
+    avg_total_latency = np.mean(all_total_latencies) if all_total_latencies else 0.0
+    avg_total_latency = round(avg_total_latency, 6)
+    avg_synthesis_latency = np.mean(all_synthesis_latencies) if all_synthesis_latencies else 0.0
+    avg_synthesis_latency = round(avg_synthesis_latency, 6)
     
     # Prepare base results without hash
     base_results = {
         'config': config_dict,
         'average_rss': avg_rss,
+        'average_total_latency': avg_total_latency,
+        'average_synthesis_latency': avg_synthesis_latency,
         'length_scores': length_scores,
-        'metadata': metadata
+        'metadata': metadata  # Includes device_info for hardware provenance from .pt
     }
     
     # Compute model hash for notarization (before content_hash)
@@ -555,7 +593,7 @@ def inspect(
     pt_path: str = typer.Option(..., "--pt-path", help="Path to the .pt embeddings file"),
     all_flag: bool = typer.Option(False, "--all", help="Inspect all lengths in the .pt file"),
     length: int = typer.Option(None, "--length", help="Specific sequence length to inspect (e.g., 8)"),
-    mode: str = typer.Option("average", "--mode", help="Mode: average, stddev, worst, best"),
+    mode: str = typer.Option("average", "--mode", help="Mode: average, stddev, worst, best, worst-time, best-time, average-time, stddev-time"),
     output_dir: str = typer.Option("inspect_plots", "--output-dir", help="Output directory for plots"),
 ):
     """
@@ -579,6 +617,10 @@ def inspect(
             - 'stddev': Standard deviation across samples (instability/hotspots in 'sine wave').
             - 'worst': Similarity from the sample with lowest contextual_coherence score (failure case).
             - 'best': Similarity from the sample with highest score (success case).
+            - 'worst-time': Worst performance with time annotations.
+            - 'best-time': Best performance with time annotations.
+            - 'average-time': Average performance with time annotations.
+            - 'stddev-time': Standard deviation with time annotations.
             Default: 'average'. Use 'stddev' or 'worst' to diagnose issues.
     --output-dir: Folder to save PNG files. Defaults to 'inspect_plots/'. Files named 'heatmap_length_{L}_mode_{M}.png'
                   (e.g., heatmap_length_6_mode_worst.png). One file per length in --all mode.
@@ -604,12 +646,12 @@ def inspect(
     - Troubleshooting: If 'length not found', check .pt keys with Python: torch.load(pt)['raw_results'].keys().
     - Pro Tip: Use 'stddev' mode on --all to spot the 'sine wave' oscillations across lengths quickly.
     """
-    from .inspect import generate_heatmap_for_length
+    from .inspect import generate_heatmap_for_length, generate_timeline_plot_for_length
     import torch
     import os
 
     plot_paths = []
-    loaded_data = torch.load(pt_path)
+    loaded_data = torch.load(pt_path, weights_only=False)
     
     # Extract length_results from the new data structure
     if 'raw_results' in loaded_data:
@@ -649,16 +691,26 @@ def inspect(
                     typer.echo(f"Warning: No samples found for length {avail_len}. Skipping.")
                     continue
                 
-                # Simply pass the raw sample_results to the new inspect function
-                filename = generate_heatmap_for_length(
-                    sample_results=sample_results,
-                    length=avail_len,
-                    mode=mode,
-                    output_dir=output_dir,
-                    num_samples=len(sample_results)
-                )
+                # Branch based on mode: heatmap or timeline
+                if mode.endswith('-time'):
+                    internal_mode = mode.replace('-time', '')
+                    filename = generate_timeline_plot_for_length(
+                        sample_results=sample_results,
+                        length=avail_len,
+                        mode=internal_mode,
+                        output_dir=output_dir,
+                        num_samples=len(sample_results)
+                    )
+                else:
+                    filename = generate_heatmap_for_length(
+                        sample_results=sample_results,
+                        length=avail_len,
+                        mode=mode,
+                        output_dir=output_dir,
+                        num_samples=len(sample_results)
+                    )
                 plot_paths.append(filename)
-                typer.echo(f"Generated heatmap for length {avail_len} with mode {mode}")
+                typer.echo(f"Generated {'timeline plot' if mode.endswith('-time') else 'heatmap'} for length {avail_len} with mode {mode}")
 
         else:
             # Inspect specific length
@@ -677,16 +729,26 @@ def inspect(
             
             typer.echo(f"Inspecting length: {length}")
             
-            # Simply pass the raw sample_results to the new inspect function
-            filename = generate_heatmap_for_length(
-                sample_results=sample_results,
-                length=length,
-                mode=mode,
-                output_dir=output_dir,
-                num_samples=len(sample_results)
-            )
+            # Branch based on mode: heatmap or timeline
+            if mode.endswith('-time'):
+                internal_mode = mode.replace('-time', '')
+                filename = generate_timeline_plot_for_length(
+                    sample_results=sample_results,
+                    length=length,
+                    mode=internal_mode,
+                    output_dir=output_dir,
+                    num_samples=len(sample_results)
+                )
+            else:
+                filename = generate_heatmap_for_length(
+                    sample_results=sample_results,
+                    length=length,
+                    mode=mode,
+                    output_dir=output_dir,
+                    num_samples=len(sample_results)
+                )
             plot_paths.append(filename)
-            typer.echo(f"Generated heatmap for length {length} with mode {mode}")
+            typer.echo(f"Generated {'timeline plot' if mode.endswith('-time') else 'heatmap'} for length {length} with mode {mode}")
 
         typer.echo(f"Inspect plots saved to: {output_dir}")
         if plot_paths:
@@ -713,7 +775,7 @@ def verify(
 
     try:
         # Load .pt file
-        pt_data = torch.load(pt_path, map_location='cpu')
+        pt_data = torch.load(pt_path, map_location='cpu', weights_only=False)
         pt_metadata = pt_data['metadata']
 
         # Load .json file

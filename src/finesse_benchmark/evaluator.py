@@ -1,5 +1,6 @@
 from typing import Dict, Any, Optional
 import torch
+import time
 from datasets import load_dataset
 import numpy as np
 import litellm
@@ -8,6 +9,7 @@ import tiktoken
 import warnings
 from transformers import AutoTokenizer
 import importlib.metadata
+import cpuinfo 
 
 from .config import BenchmarkConfig
 from .scoring import calculate_self_attestation_scores, calculate_self_attestation_scores_bottom_up
@@ -124,22 +126,60 @@ class FinesseEvaluator:
                         # 이터레이터가 끝나면 다시 시작
                         iterator = iter(dataset)
                         continue
+                # 청크들 임베딩 with timing
+                if self.config.mode == 'merger_mode':
+                    chunk_times = []
+                    chunk_embeddings_list = []
+                    use_gpu_timing = torch.cuda.is_available()
+                    for text in chunk_texts:
+                        single_texts = [text]
+                        if use_gpu_timing:
+                            start = torch.cuda.Event(enable_timing=True)
+                            start.record()
+                        else:
+                            start_cpu = time.perf_counter()
+                        single_emb_tensor = self.embedder.encode(single_texts)
+                        if use_gpu_timing:
+                            end = torch.cuda.Event(enable_timing=True)
+                            end.record()
+                            torch.cuda.synchronize()
+                            elapsed_ms = start.elapsed_time(end)
+                        else:
+                            end_cpu = time.perf_counter()
+                            elapsed_ms = (end_cpu - start_cpu) * 1000
+                        chunk_times.append(elapsed_ms)
+                        chunk_embeddings_list.append(single_emb_tensor[0].cpu())
+                    chunk_embeddings = chunk_embeddings_list
+                else:
+                    chunk_times = None
+                    chunk_embeddings_tensor = self.embedder.encode(chunk_texts)
+                    chunk_embeddings = [chunk_embeddings_tensor[i].cpu() for i in range(chunk_embeddings_tensor.size(0))]
                 
-                
-                # 청크들 임베딩
-                chunk_embeddings_tensor = self.embedder.encode(chunk_texts)
-                chunk_embeddings = [chunk_embeddings_tensor[i].cpu() for i in range(chunk_embeddings_tensor.size(0))]
-                
-                # 누적 합성 수행: A, AB, ABC, ..., ABCDEFG (GPU Tour Optimization)
-                device = chunk_embeddings_tensor.device
+                device = 'cuda' if torch.cuda.is_available() else 'cpu'
+                # 누적 합성 수행: A, AB, ABC, ..., ABCDEFG (GPU Tour Optimization with timing)
+                use_gpu_timing = torch.cuda.is_available()
                 synthesis_embeddings = []
+                synth_times = []
                 cumulative_embeddings = torch.empty((0, chunk_embeddings[0].shape[0]), dtype=chunk_embeddings[0].dtype, device=device)
 
-                for emb in chunk_embeddings:
+                for i, emb in enumerate(chunk_embeddings):
                     single_on_device = emb.to(device)
                     cumulative_embeddings = torch.cat([cumulative_embeddings, single_on_device.unsqueeze(0)], dim=0)
-                    partial_embs = cumulative_embeddings.unsqueeze(0)  # (1, i, D)
-                    synth_emb = self.synthesizer.synthesize(partial_embs).squeeze(0)
+                    partial_embs = cumulative_embeddings.unsqueeze(0)  # (1, i+1, D)
+                    if use_gpu_timing:
+                        start = torch.cuda.Event(enable_timing=True)
+                        start.record()
+                        synth_emb = self.synthesizer.synthesize(partial_embs).squeeze(0)
+                        end = torch.cuda.Event(enable_timing=True)
+                        end.record()
+                        torch.cuda.synchronize()
+                        elapsed_ms = start.elapsed_time(end)
+                    else:
+                        start_cpu = time.perf_counter()
+                        synth_emb = self.synthesizer.synthesize(partial_embs).squeeze(0)
+                        end_cpu = time.perf_counter()
+                        elapsed_ms = (end_cpu - start_cpu) * 1000
+                    synth_times.append(0.0 if i == 0 else elapsed_ms)
                     synth_emb_cpu = synth_emb.cpu()
 
                     # Validate synthesizer output: must be 1D tensor (d_model,)
@@ -160,7 +200,9 @@ class FinesseEvaluator:
                 # 샘플 결과 저장
                 sample_dict = {
                     'chunk_embeddings': chunk_embeddings,
-                    'synthesis_embeddings': synthesis_embeddings
+                    'synthesis_embeddings': synthesis_embeddings,
+                    'chunk_times': chunk_times,
+                    'synth_times': synth_times
                 }
                 sample_results.append(sample_dict)
 
@@ -179,10 +221,32 @@ class FinesseEvaluator:
         except Exception as e:
             package_metadata = {'finesse-benchmark': f'error: {str(e)}'}
 
+        # Add device information for hardware provenance
+        device_info = {}
+        # CPU info
+        try:
+            cpu_info = cpuinfo.get_cpu_info()
+            device_info['cpu'] = cpu_info.get('brand_raw', 'unknown')
+        except Exception as e:
+            device_info['cpu'] = f'error: {str(e)}'
+        # GPU info
+        if torch.cuda.is_available():
+            try:
+                device_info['gpu'] = torch.cuda.get_device_name(0)
+                device_info['cuda_version'] = torch.version.cuda
+            except Exception as e:
+                device_info['gpu'] = f'cuda error: {str(e)}'
+                device_info['cuda_version'] = 'unknown'
+        else:
+            device_info['gpu'] = 'none'
+        # Torch version
+        device_info['torch_version'] = torch.__version__
+
         metadata = {
             'package_versions': package_metadata,
             'dataset': dataset_metadata,
-            'config': self.config.model_dump()
+            'config': self.config.model_dump(),
+            'device_info': device_info
         }
 
         return {

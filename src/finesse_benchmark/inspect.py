@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from typing import List, Dict
 from .scoring import calculate_self_attestation_scores, calculate_self_attestation_scores_bottom_up
-
 def generate_heatmap_for_length(
     sample_results: List[Dict],
     length: int,
@@ -159,6 +158,86 @@ def generate_heatmap_for_length(
     # Save the plot
     os.makedirs(output_dir, exist_ok=True)
     filename = f'heatmap_length_{length}_mode_{mode}.png'
+    filepath = os.path.join(output_dir, filename)
+    plt.savefig(filepath, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    return filepath
+
+def generate_timeline_plot_for_length(sample_results, length, mode, output_dir, num_samples):
+    # Validate mode
+    if mode not in ['worst', 'best', 'average', 'stddev']:
+        raise ValueError(f"Invalid time mode: {mode}. Must be worst, best, average, or stddev.")
+    
+    # Extract times from all samples
+    all_chunk_times = []
+    all_synth_times = []
+    all_total_times = []
+    
+    for sample in sample_results:
+        chunk_times = sample.get('chunk_times', None)
+        synth_times = sample.get('synth_times', [])
+        
+        # Handle chunk_times: for merger_mode it's list of N times, for others None -> [0] * length
+        if chunk_times is None:
+            chunk_t = np.zeros(length)
+        else:
+            chunk_t = np.array(chunk_times)
+        all_chunk_times.append(chunk_t)
+        
+        synth_t = np.array(synth_times)
+        all_synth_times.append(synth_t)
+        
+        # Total time for best/worst selection
+        total_t = np.sum(chunk_t) + np.sum(synth_t)
+        all_total_times.append(total_t)
+    
+    # Compute based on mode
+    if mode in ['worst', 'best']:
+        if mode == 'worst':
+            idx = np.argmax(all_total_times)
+        else:  # best
+            idx = np.argmin(all_total_times)
+        
+        selected_chunk = all_chunk_times[idx]
+        selected_synth = all_synth_times[idx]
+        
+        # Prepare for plot: x from 1 to length (steps)
+        steps = np.arange(1, length + 1)
+        chunk_plot = selected_chunk
+        synth_plot = selected_synth[:length]  # synth_times has N elements for N steps
+        
+        title_suffix = f' {mode.upper()} Case'
+    else:  # average or stddev
+        all_chunk_times = np.array(all_chunk_times)  # (num_samples, length)
+        all_synth_times = np.array(all_synth_times)  # (num_samples, up to length)
+        
+        if mode == 'average':
+            chunk_plot = np.mean(all_chunk_times, axis=0)
+            synth_plot = np.mean(all_synth_times, axis=0)
+        else:  # stddev
+            chunk_plot = np.std(all_chunk_times, axis=0)
+            synth_plot = np.std(all_synth_times, axis=0)
+        
+        steps = np.arange(1, length + 1)
+        synth_plot = synth_plot[:length]  # Ensure length match
+        
+        title_suffix = f' {mode.upper()} Across {num_samples} Samples'
+    
+    # Create the dual timeline plot
+    plt.figure(figsize=(10, 6))
+    plt.plot(steps, chunk_plot, 'b-o', label='Chunk Embedding Times (ms)', linewidth=2, markersize=4)
+    plt.plot(steps, synth_plot, 'r-s', label='Synthesis Step Times (ms)', linewidth=2, markersize=4)
+    plt.xlabel('Step / Chunk Index')
+    plt.ylabel('Time (ms)')
+    plt.title(f'Dual Timeline: Length {length}{title_suffix}')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    
+    # Save
+    os.makedirs(output_dir, exist_ok=True)
+    filename = f'timeline_length_{length}_mode_{mode}-time.png'
     filepath = os.path.join(output_dir, filename)
     plt.savefig(filepath, dpi=300, bbox_inches='tight')
     plt.close()

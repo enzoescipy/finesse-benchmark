@@ -144,3 +144,36 @@ def calculate_self_attestation_scores_bottom_up(chunk_embeddings, synth_embeddin
     return {
         'bottom_up_coherence': contextual_coherence_bottom_up
     }
+
+def calculate_sample_latency(mode: str, chunk_times: list[float], synth_times: list[float]) -> dict:
+    """
+    Calculate latencies for final synthesized vector production.
+    
+    Returns two metrics:
+    - total_latency: Total time for cold start (all chunks + final synthesis).
+    - synthesis_latency: Time for warm start (final synthesis only, assuming cached chunks).
+    
+    Args:
+        mode: 'merger_mode', 'native_mode', or 'byok_mode'.
+        chunk_times: List of embedding times for chunks (ms), None/empty for non-merger modes.
+        synth_times: List of synthesis times (ms), last is final synthesis.
+    """
+    if mode == 'merger_mode':
+        # Caching cost (one-time embedding of chunks)
+        caching_cost = sum(chunk_times) if chunk_times else 0.0
+        # Final synthesis cost (real-time assembly)
+        synthesis_cost = synth_times[-1] if synth_times else 0.0
+        total_latency = caching_cost + synthesis_cost
+        synthesis_latency = synthesis_cost
+    elif mode in ('native_mode', 'byok_mode'):
+        # End-to-End: no separation of caching and synthesis
+        total_cost = synth_times[-1] if synth_times else 0.0
+        total_latency = total_cost
+        synthesis_latency = total_cost
+    else:
+        raise ValueError(f'Unknown mode: {mode}')
+    
+    return {
+        'total_latency': total_latency,
+        'synthesis_latency': synthesis_latency
+    }
