@@ -280,7 +280,13 @@ To ensure fair, reproducible, and standardized evaluations for the official Fine
 3. **Verify & Submit**:
    Check integrity:
    ```bash
-   finesse checksum --json-path results/benchmark_results.json --model-path <your-model-id>
+   finesse checksum --json-path results/benchmark_results.json
+
+   finesse checksum --json-path results/benchmark_results.json --merger-path enzoescipy/sequence-merger-malgeum --base-embedder-path intfloat/multilingual-e5-base
+
+   finesse checksum --json-path results/benchmark_results.json --native-path Snowflake/snowflake-arctic-embed-l-v2.0
+
+   finesse verify --json-path results/benchmark_results.json --pt-path results/embeddings_merger_mode_finesse-benchmark-database.pt
    ```
    Submit `benchmark_results.json` to the leaderboard (via HF Spaces, GitHub, etc.). Include `content_hash` and `model_hash` for verification.
 
