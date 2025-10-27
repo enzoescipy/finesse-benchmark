@@ -5,7 +5,6 @@ from typing import Optional
 import typer
 import torch
 import numpy as np
-import click
 import traceback
 from importlib import resources
 from .utils import get_content_hash, get_model_hash
@@ -373,14 +372,14 @@ def verify_integrity(
     # recomputed_hash = get_content_hash(verify_data, debug_file_path='results/recomputed_canonical.txt')
     
     if recomputed_hash == stored_hash:
-        click.echo("✅ Content Verification SUCCESS")
-        click.echo(f"Stored Content Hash: {stored_hash}")
-        click.echo(f"Recomputed Content Hash: {recomputed_hash}")
+        typer.echo("✅ Content Verification SUCCESS")
+        typer.echo(f"Stored Content Hash: {stored_hash}")
+        typer.echo(f"Recomputed Content Hash: {recomputed_hash}")
         
         # If any model path provided, perform model provenance check
         if merger_path or base_embedder_path or native_path:
             if 'model_hash' not in data or data['model_hash'] is None:
-                click.echo("❌ Model Provenance FAILED: No 'model_hash' in results.")
+                typer.echo("❌ Model Provenance FAILED: No 'model_hash' in results.")
                 raise typer.Exit(code=1)
             
             stored_model_hash = data['model_hash']
@@ -390,7 +389,7 @@ def verify_integrity(
                 if config.mode == 'merger_mode':
                     # Dual Notarization Protocol: Verify both merger and base_embedder
                     if not merger_path or not base_embedder_path:
-                        click.echo("❌ Model Provenance FAILED: For merger_mode, both --merger-path and --base-embedder-path must be provided.")
+                        typer.echo("❌ Model Provenance FAILED: For merger_mode, both --merger-path and --base-embedder-path must be provided.")
                         raise typer.Exit(code=1)
                     
                     # Compute hashes for both models
@@ -402,38 +401,38 @@ def verify_integrity(
                     stored_base_hash = stored_model_hash.get('base_embedder')
                     
                     if computed_merger_hash == stored_merger_hash and computed_base_hash == stored_base_hash:
-                        click.echo("✅ Model Provenance SUCCESS")
-                        click.echo(f"Merger Hash: {computed_merger_hash[:16]}... (matches)")
-                        click.echo(f"Base Embedder Hash: {computed_base_hash[:16]}... (matches)")
+                        typer.echo("✅ Model Provenance SUCCESS")
+                        typer.echo(f"Merger Hash: {computed_merger_hash[:16]}... (matches)")
+                        typer.echo(f"Base Embedder Hash: {computed_base_hash[:16]}... (matches)")
                     else:
-                        click.echo("❌ Model Provenance FAILED")
+                        typer.echo("❌ Model Provenance FAILED")
                         if computed_merger_hash != stored_merger_hash:
-                            click.echo(f"Merger Hash Mismatch: Computed {computed_merger_hash[:16]}..., Stored {stored_merger_hash[:16]}...")
+                            typer.echo(f"Merger Hash Mismatch: Computed {computed_merger_hash[:16]}..., Stored {stored_merger_hash[:16]}...")
                         if computed_base_hash != stored_base_hash:
-                            click.echo(f"Base Embedder Hash Mismatch: Computed {computed_base_hash[:16]}..., Stored {stored_base_hash[:16]}...")
+                            typer.echo(f"Base Embedder Hash Mismatch: Computed {computed_base_hash[:16]}..., Stored {stored_base_hash[:16]}...")
                         raise typer.Exit(code=1)
                         
                 elif config.mode == 'native_mode':
                     # Single model verification for native_mode
                     if not native_path:
-                        click.echo("❌ Model Provenance FAILED: For native_mode, --native-path must be provided.")
+                        typer.echo("❌ Model Provenance FAILED: For native_mode, --native-path must be provided.")
                         raise typer.Exit(code=1)
                     
                     computed_model_hash = get_model_hash(native_path)
                     stored_native_hash = stored_model_hash.get('native')
                     
                     if computed_model_hash == stored_native_hash:
-                        click.echo("✅ Model Provenance SUCCESS")
-                        click.echo(f"Native Model Hash: {computed_model_hash[:16]}... (matches)")
+                        typer.echo("✅ Model Provenance SUCCESS")
+                        typer.echo(f"Native Model Hash: {computed_model_hash[:16]}... (matches)")
                     else:
-                        click.echo("❌ Model Provenance FAILED")
-                        click.echo(f"Native Hash Mismatch: Computed {computed_model_hash[:16]}..., Stored {stored_native_hash[:16]}...")
+                        typer.echo("❌ Model Provenance FAILED")
+                        typer.echo(f"Native Hash Mismatch: Computed {computed_model_hash[:16]}..., Stored {stored_native_hash[:16]}...")
                         raise typer.Exit(code=1)
                         
                 elif config.mode == 'byok_mode':
                     # Diplomat Passport Protocol for BYOK mode
                     if merger_path or base_embedder_path or native_path:
-                        click.echo("ℹ️ BYOK mode detected. Model path parameters are ignored.")
+                        typer.echo("ℹ️ BYOK mode detected. Model path parameters are ignored.")
                     
                     provider = config.models.byok_embedder.provider
                     name = config.models.byok_embedder.name
@@ -442,32 +441,32 @@ def verify_integrity(
                     stored_byok_hash = stored_model_hash.get('byok')
                     
                     if computed_model_hash == stored_byok_hash:
-                        click.echo("✅ Model Provenance SUCCESS")
-                        click.echo(f"BYOK Identity Hash: {computed_model_hash[:16]}... (matches)")
+                        typer.echo("✅ Model Provenance SUCCESS")
+                        typer.echo(f"BYOK Identity Hash: {computed_model_hash[:16]}... (matches)")
                     else:
-                        click.echo("❌ Model Provenance FAILED")
-                        click.echo(f"BYOK Hash Mismatch: Computed {computed_model_hash[:16]}..., Stored {stored_byok_hash[:16]}...")
+                        typer.echo("❌ Model Provenance FAILED")
+                        typer.echo(f"BYOK Hash Mismatch: Computed {computed_model_hash[:16]}..., Stored {stored_byok_hash[:16]}...")
                         raise typer.Exit(code=1)
                 else:
-                    click.echo("❌ Model Provenance ERROR: Unknown mode in config")
+                    typer.echo("❌ Model Provenance ERROR: Unknown mode in config")
                     raise typer.Exit(code=1)
                     
             except Exception as e:
-                click.echo(f"❌ Model Provenance ERROR: {e}")
+                typer.echo(f"❌ Model Provenance ERROR: {e}")
                 raise typer.Exit(code=1)
         else:
             # Provide more helpful message based on config mode
             config = BenchmarkConfig.model_validate(data['config'])
             if config.mode == 'byok_mode':
-                click.echo("ℹ️ BYOK mode detected. Model provenance is based on provider/name identity.")
+                typer.echo("ℹ️ BYOK mode detected. Model provenance is based on provider/name identity.")
             elif config.mode == 'merger_mode':
-                click.echo("ℹ️ Run with --merger-path [MERGER] and --base-embedder-path [EMBEDDER] for full dual provenance verification.")
+                typer.echo("ℹ️ Run with --merger-path [MERGER] and --base-embedder-path [EMBEDDER] for full dual provenance verification.")
             else:
-                click.echo("ℹ️ Run with --native-path [EMBEDDER] for full provenance verification.")
+                typer.echo("ℹ️ Run with --native-path [EMBEDDER] for full provenance verification.")
     else:
-        click.echo("❌ Content Verification FAILED")
-        click.echo(f"Stored Content Hash: {stored_hash}")
-        click.echo(f"Recomputed Content Hash: {recomputed_hash}")
+        typer.echo("❌ Content Verification FAILED")
+        typer.echo(f"Stored Content Hash: {stored_hash}")
+        typer.echo(f"Recomputed Content Hash: {recomputed_hash}")
         raise typer.Exit(code=1)
 
 @app.command("init")
