@@ -510,6 +510,10 @@ def verify_integrity(
 @app.command("init")
 def init_config(
     leaderboard: bool = typer.Option(False, "--leaderboard", help="Use official leaderboard configuration (copies benchmark.leaderboard.yaml)"),
+    mode: Optional[str] = typer.Option(None, "--mode", help="Set the benchmark mode (merger_mode, native_mode, byok_mode)"),
+    merger: Optional[str] = typer.Option(None, "--merger", help="Set the merger model path for merger_mode"),
+    base_embedder: Optional[str] = typer.Option(None, "--base-embedder", help="Set the base_embedder model path for merger_mode"),
+    native_embedder: Optional[str] = typer.Option(None, "--native-embedder", help="Set the native_embedder model path for native_mode"),
     output_path: str = typer.Option("benchmark.yaml", "--output", help="Path to save the config file")):
     """
     Generate a default or leaderboard benchmark.yaml configuration template.
@@ -522,6 +526,11 @@ def init_config(
     --leaderboard: If True, copies the official 'benchmark.leaderboard.yaml' (immutable for fair comparisons).
                    Includes standard models (sequence-merger-malgeum + multilingual-e5-base), dataset,
                    probe lengths 4-32, 25 samples/length, seed 42.
+                   Note: Overrides (--mode, --merger, etc.) are disabled for leaderboard to ensure consistency.
+    --mode: Set the benchmark mode (merger_mode, native_mode, byok_mode). Defaults to merger_mode.
+    --merger: Hugging Face model path for the merger (e.g., 'enzoescipy/sequence-merger-malgeum'). Used in merger_mode.
+    --base-embedder: Hugging Face model path for the base embedder (e.g., 'intfloat/multilingual-e5-base'). Used in merger_mode.
+    --native-embedder: Hugging Face model path for the native long-context embedder (e.g., 'Snowflake/snowflake-arctic-embed-l'). Used in native_mode.
     --output: Path to save the generated YAML. Defaults to 'benchmark.yaml' in current directory.
 
     Template Contents (Default Mode):
@@ -541,8 +550,12 @@ def init_config(
     Usage Examples:
     $ finesse init --output my_config.yaml
        # Generate editable default template.
+    $ finesse init --mode native_mode --native-embedder Snowflake/snowflake-arctic-embed-l --output my_config.yaml
+       # Generate with native mode and specific model.
     $ finesse init --leaderboard --output leaderboard_config.yaml
        # Copy official leaderboard config; validates Pydantic schema on creation.
+    $ finesse init --mode merger_mode --merger enzoescipy/sequence-merger-malgeum --base-embedder intfloat/multilingual-e5-base
+       # Generate customized merger_mode config.
 
     Post-Generation Steps:
     - Edit the YAML (e.g., change models, lengths).
@@ -555,27 +568,66 @@ def init_config(
             typer.echo(f"Loading leaderboard config from package: {resource_file}")
             with resources.open_text('finesse_benchmark', resource_file) as f:
                 content = f.read()
+            yaml_data = yaml.safe_load(content)
+            
+            # Check for overrides - disable for leaderboard
+            if mode or merger or base_embedder or native_embedder:
+                typer.echo("❌ Error: Override arguments (--mode, --merger, etc.) are not allowed with --leaderboard to preserve immutability.")
+                raise typer.Exit(code=1)
+            
             typer.echo(f"Leaderboard benchmark.yaml generated at: {output_path}")
         else:
             resource_file = 'benchmark.default.yaml'
             typer.echo(f"Loading default config from package: {resource_file}")
             with resources.open_text('finesse_benchmark', resource_file) as f:
                 content = f.read()
-            typer.echo(f"Default benchmark.yaml generated at: {output_path}")
+            yaml_data = yaml.safe_load(content)
+            
+            # Apply overrides if provided
+            if mode:
+                if mode not in ['merger_mode', 'native_mode', 'byok_mode']:
+                    typer.echo(f"❌ Error: Invalid mode '{mode}'. Must be one of: merger_mode, native_mode, byok_mode.")
+                    raise typer.Exit(code=1)
+                yaml_data['mode'] = mode
+                typer.echo(f"Set mode to: {mode}")
+            
+            if merger:
+                if 'models' not in yaml_data or 'merger' not in yaml_data['models']:
+                    typer.echo("❌ Error: Invalid template structure for --merger.")
+                    raise typer.Exit(code=1)
+                yaml_data['models']['merger']['name'] = merger
+                typer.echo(f"Set merger model to: {merger}")
+            
+            if base_embedder:
+                if 'models' not in yaml_data or 'base_embedder' not in yaml_data['models']:
+                    typer.echo("❌ Error: Invalid template structure for --base-embedder.")
+                    raise typer.Exit(code=1)
+                yaml_data['models']['base_embedder']['name'] = base_embedder
+                typer.echo(f"Set base_embedder model to: {base_embedder}")
+            
+            if native_embedder:
+                if 'models' not in yaml_data or 'native_embedder' not in yaml_data['models']:
+                    typer.echo("❌ Error: Invalid template structure for --native-embedder.")
+                    raise typer.Exit(code=1)
+                yaml_data['models']['native_embedder']['name'] = native_embedder
+                typer.echo(f"Set native_embedder model to: {native_embedder}")
+            
+            typer.echo(f"Custom default benchmark.yaml generated at: {output_path}")
         
+        # Write the (potentially modified) YAML
         with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(content)
+            yaml.dump(yaml_data, f, default_flow_style=False, allow_unicode=True)
 
-        # Validate the copied config
+        # Validate the generated config
         try:
             with open(output_path, "r", encoding='utf-8') as f:
-                yaml_data = yaml.safe_load(f)
-            config = BenchmarkConfig.model_validate(yaml_data)
+                loaded_yaml = yaml.safe_load(f)
+            config = BenchmarkConfig.model_validate(loaded_yaml)
             if leaderboard:
                 typer.echo("Leaderboard config validated successfully with BenchmarkConfig.")
             else:
-                typer.echo("YAML template validated successfully with BenchmarkConfig.")
-                typer.echo("Edit the file to customize models, modes, and settings.")
+                typer.echo("Custom YAML template validated successfully with BenchmarkConfig.")
+                typer.echo("You can further edit the file to customize models, modes, and settings.")
         except Exception as e:
             typer.echo(f"Error: Generated YAML is invalid - {e}")
             if os.path.exists(output_path):
@@ -585,7 +637,7 @@ def init_config(
         typer.echo(f"Error: Package resource not found: {resource_file}. Ensure it exists in the finesse_benchmark package.")
         raise typer.Exit(code=1)
     except Exception as e:
-        typer.echo(f"Error loading config from package: {e}")
+        typer.echo(f"Error loading or processing config from package: {e}")
         raise typer.Exit(code=1)
 
 @app.command("inspect")
