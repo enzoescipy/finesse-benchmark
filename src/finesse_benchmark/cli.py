@@ -710,5 +710,43 @@ def inspect(
         typer.echo(traceback.format_exc())
         raise typer.Exit(code=1)
 
+@app.command()
+def verify(
+    pt_path: str = typer.Option(...,"--pt-path", help="Path to the .pt probe matrix file"),
+    json_path: str = typer.Option(...,"--json-path", help="Path to the .json results file")
+):
+    """Verify metadata consistency between .pt and .json files."""
+    import torch
+    import json
+
+    try:
+        # Load .pt file
+        pt_data = torch.load(pt_path, map_location='cpu')
+        pt_metadata = pt_data['metadata']
+
+        # Load .json file
+        with open(json_path, 'r', encoding='utf-8') as f:
+            json_data = json.load(f)
+            json_metadata = json_data['metadata']
+
+        # Compare metadata
+        if pt_metadata == json_metadata:
+            typer.echo("✅ Metadata verification: SUCCESS - Files are consistent.")
+        else:
+            typer.echo("❌ Metadata verification: FAILED - Files are inconsistent.")
+            typer.echo("Debug: Check the differences manually.")
+
+    except FileNotFoundError as e:
+        typer.echo(f"❌ Error: File not found - {str(e)}")
+        raise typer.Exit(code=1)
+    except KeyError as e:
+        typer.echo(f"❌ Error: Missing 'metadata' key in file - {str(e)}")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        typer.echo(f"❌ Error: {str(e)}")
+        raise typer.Exit(code=1)
+
+
+
 if __name__ == "__main__":
     app()

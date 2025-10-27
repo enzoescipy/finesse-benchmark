@@ -74,7 +74,7 @@ class FinesseEvaluator:
                     raise ValueError(f"데이터셋 소진: target_length={target_length}에서 충분한 샘플을 찾을 수 없음. {len(sample_results)}/{self.config.probe_config.samples_per_length}개만 생성됨.")
                 
                 typer.echo(f"probe sequence [{target_length}] in progress ({len(sample_results)}/{self.config.probe_config.samples_per_length})...")
-                
+
                 # 이 테스트를 위해 target_length 개의 청크를 생성
                 chunk_texts = []
                 chunk_token_count = 0
@@ -181,7 +181,8 @@ class FinesseEvaluator:
 
         metadata = {
             'package_versions': package_metadata,
-            'dataset': dataset_metadata
+            'dataset': dataset_metadata,
+            'config': self.config.model_dump()
         }
 
         return {
