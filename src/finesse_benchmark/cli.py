@@ -514,6 +514,9 @@ def init_config(
     merger: Optional[str] = typer.Option(None, "--merger", help="Set the merger model path for merger_mode"),
     base_embedder: Optional[str] = typer.Option(None, "--base-embedder", help="Set the base_embedder model path for merger_mode"),
     native_embedder: Optional[str] = typer.Option(None, "--native-embedder", help="Set the native_embedder model path for native_mode"),
+    base_max_len: Optional[int] = typer.Option(None, "--base-max-len", help="Set the max context length for base_embedder (tokens)"),
+    native_max_len: Optional[int] = typer.Option(None, "--native-max-len", help="Set the max context length for native_embedder (tokens)"),
+    byok_max_len: Optional[int] = typer.Option(None, "--byok-max-len", help="Set the max context length for byok_embedder (tokens)"),
     output_path: str = typer.Option("benchmark.yaml", "--output", help="Path to save the config file")):
     """
     Generate a default or leaderboard benchmark.yaml configuration template.
@@ -531,6 +534,9 @@ def init_config(
     --merger: Hugging Face model path for the merger (e.g., 'enzoescipy/sequence-merger-malgeum'). Used in merger_mode.
     --base-embedder: Hugging Face model path for the base embedder (e.g., 'intfloat/multilingual-e5-base'). Used in merger_mode.
     --native-embedder: Hugging Face model path for the native long-context embedder (e.g., 'Snowflake/snowflake-arctic-embed-l'). Used in native_mode.
+    --base-max-len: Optional integer for base_embedder max_context_length (tokens, e.g., 512 for e5-base).
+    --native-max-len: Optional integer for native_embedder max_context_length (tokens, e.g., 8192 for arctic-embed).
+    --byok-max-len: Optional integer for byok_embedder max_context_length (tokens, e.g., 8192 for text-embedding-3-large).
     --output: Path to save the generated YAML. Defaults to 'benchmark.yaml' in current directory.
 
     Template Contents (Default Mode):
@@ -571,8 +577,8 @@ def init_config(
             yaml_data = yaml.safe_load(content)
             
             # Check for overrides - disable for leaderboard
-            if mode or merger or base_embedder or native_embedder:
-                typer.echo("❌ Error: Override arguments (--mode, --merger, etc.) are not allowed with --leaderboard to preserve immutability.")
+            if mode or merger or base_embedder or native_embedder or base_max_len or native_max_len or byok_max_len:
+                typer.echo("❌ Error: Override arguments (--mode, --merger, --base-max-len, etc.) are not allowed with --leaderboard to preserve immutability.")
                 raise typer.Exit(code=1)
             
             typer.echo(f"Leaderboard benchmark.yaml generated at: {output_path}")
@@ -611,6 +617,27 @@ def init_config(
                     raise typer.Exit(code=1)
                 yaml_data['models']['native_embedder']['name'] = native_embedder
                 typer.echo(f"Set native_embedder model to: {native_embedder}")
+
+            if base_max_len is not None:
+                if 'models' not in yaml_data or 'base_embedder' not in yaml_data['models']:
+                    typer.echo("❌ Error: Invalid template structure for --base-max-len.")
+                    raise typer.Exit(code=1)
+                yaml_data['models']['base_embedder']['max_context_length'] = base_max_len
+                typer.echo(f"Set base_embedder max_context_length to: {base_max_len}")
+
+            if native_max_len is not None:
+                if 'models' not in yaml_data or 'native_embedder' not in yaml_data['models']:
+                    typer.echo("❌ Error: Invalid template structure for --native-max-len.")
+                    raise typer.Exit(code=1)
+                yaml_data['models']['native_embedder']['max_context_length'] = native_max_len
+                typer.echo(f"Set native_embedder max_context_length to: {native_max_len}")
+
+            if byok_max_len is not None:
+                if 'models' not in yaml_data or 'byok_embedder' not in yaml_data['models']:
+                    typer.echo("❌ Error: Invalid template structure for --byok-max-len. Uncomment byok_embedder section first.")
+                    raise typer.Exit(code=1)
+                yaml_data['models']['byok_embedder']['max_context_length'] = byok_max_len
+                typer.echo(f"Set byok_embedder max_context_length to: {byok_max_len}")
             
             typer.echo(f"Custom default benchmark.yaml generated at: {output_path}")
         

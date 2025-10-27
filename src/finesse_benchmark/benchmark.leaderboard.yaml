@@ -18,8 +18,33 @@ models:
   base_embedder:
     name: "intfloat/multilingual-e5-base"  # Standard multilingual base for global coverage
   # Native Embedder (for native_mode comparisons)
+
+    max_context_length: 512  # Automatic check in merger_mode: ensures token_per_sample <= this limit
+
+  # IMPORTANT: max_context_length Field Explanation (for all embedder types: base, native, byok)
+  #
+  # This optional field specifies the model's official maximum context length in tokens.
+  # It is CRITICAL for fair and accurate benchmarking in native_mode or byok_mode.
+  #
+  # How it works:
+  # - Before evaluation starts (in __init__), the evaluator performs a 'Pre-flight Qualification Check':
+  #   - For merger_mode: Compares probe_config.token_per_sample against base_embedder.max_context_length; raises error if exceeded.
+  #   - For native/byok_mode: Calculates total required tokens per sequence (target_length * token_per_sample + overhead) against max_context_length; skips exceeding samples during run.
+  #   - If max_context_length is None (default), raises ValueError to prevent invalid runs.
+  #
+  # Recommendations:
+  # - ALWAYS set this for ALL embedders: base_embedder (merger_mode), native_embedder (native_mode), byok_embedder (byok_mode).
+  #   - Examples: 512 for multilingual-e5-base (base), 8192 for snowflake-arctic-embed-l (native), 8192 for text-embedding-3-large (byok).
+  # - Check model docs/HF card for exact value (often max_position_embeddings, but verify effective limit).
+  # - Adjust probe_config.token_per_sample or sequence_length.max to stay within limits.
+  #
+  # Example: For intfloat/multilingual-e5-base (base_embedder), official context is 512 tokens.
+  #
+  # Used only in native_mode (if separate)
   native_embedder:
-    name: "Snowflake/snowflake-arctic-embed-l-v2.0"  # Reference long-context embedder
+    # e.g., "Snowflake/snowflake-arctic-embed-l-v2.0"
+    name: "Snowflake/snowflake-arctic-embed-l-v2.0"
+    max_context_length: 8192  # Automatic skip for sequences exceeding this (e.g., >32 chunks at 256 tokens each)
 
   # [BYOK Mode Example - Uncomment and edit for BYOK usage]
   # For byok_mode: Specify the API provider and model name for litellm

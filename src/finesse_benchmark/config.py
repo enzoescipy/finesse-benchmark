@@ -17,11 +17,15 @@ class AutoModelSelector(BaseModel):
     """hf 모델 설정"""
     name: str = Field(..., description="모델 카드 이름")
 
+    max_context_length: Optional[int] = Field(default=None, description="모델의 최대 컨텍스트 길이 (토크나이저 수). 자격 심사를 위해 사용됩니다.")
+
 class ByokEmbedderConfig(BaseModel):
     """BYOK 임베더 설정"""
     provider: str = Field(..., description="API 제공자 (e.g., 'openai', 'cohere', 'google')")
     name: str = Field(..., description="Litellm 모델 이름 (e.g., 'text-embedding-3-large')")
     tokenizer_path: Optional[str] = Field(default=None, description="BYOK 모델의 토크나이저 경로 (e.g., 'Cohere/cohere-tokenizer-fast'). 지정하지 않으면 기본 토크나이저를 사용하며 정확도가 떨어질 수 있습니다.")
+
+    max_context_length: Optional[int] = Field(default=None, description="모델의 최대 컨텍스트 길이 (토크나이저 수). 자격 심사를 위해 사용됩니다.")
 
 class ProbeConfig(BaseModel):
     """프로브 생성 설정"""

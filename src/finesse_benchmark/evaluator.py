@@ -31,6 +31,42 @@ class FinesseEvaluator:
         self.embedder = embedder_engine
         self.synthesizer = synthesizer_engine
 
+        # Pre-flight Qualification Check: Validate max_context_length based on mode
+        if self.config.mode == 'merger_mode':
+            base_embedder_config = self.config.models.base_embedder
+            if base_embedder_config.max_context_length is None:
+                raise ValueError("merger_mode requires 'models.base_embedder.max_context_length' to be set in config.")
+            token_per_sample = self.config.probe_config.token_per_sample
+            if token_per_sample > base_embedder_config.max_context_length:
+                raise ValueError(
+                    f"probe_config.token_per_sample ({token_per_sample}) exceeds base_embedder.max_context_length ({base_embedder_config.max_context_length}). "
+                    f"Adjust token_per_sample or use a model with longer context."
+                )
+        elif self.config.mode == 'native_mode':
+            native_embedder_config = self.config.models.native_embedder
+            if native_embedder_config is None or native_embedder_config.max_context_length is None:
+                raise ValueError("native_mode requires 'models.native_embedder.max_context_length' to be set in config.")
+            # Additional check: Estimate max total tokens (sequence_length.max * token_per_sample)
+            max_seq_len = self.config.probe_config.sequence_length.max
+            estimated_max_tokens = max_seq_len * self.config.probe_config.token_per_sample + 100  # +overhead for safety
+            if estimated_max_tokens > native_embedder_config.max_context_length:
+                warnings.warn(
+                    f"Maximum sequence may exceed native_embedder context: estimated {estimated_max_tokens} > {native_embedder_config.max_context_length}. "
+                    f"Samples exceeding limit will be automatically skipped during evaluation."
+                )
+        elif self.config.mode == 'byok_mode':
+            byok_embedder_config = self.config.models.byok_embedder
+            if byok_embedder_config is None or byok_embedder_config.max_context_length is None:
+                raise ValueError("byok_mode requires 'models.byok_embedder.max_context_length' to be set in config.")
+            # Similar warning for BYOK
+            max_seq_len = self.config.probe_config.sequence_length.max
+            estimated_max_tokens = max_seq_len * self.config.probe_config.token_per_sample + 100  # +overhead
+            if estimated_max_tokens > byok_embedder_config.max_context_length:
+                warnings.warn(
+                    f"Maximum sequence may exceed byok_embedder context: estimated {estimated_max_tokens} > {byok_embedder_config.max_context_length}. "
+                    f"Samples exceeding limit will be automatically skipped during evaluation."
+                )
+
     def raw_run(self) -> Dict[str, Any]:
         """Finesse 벤치마크 실행: Stratified CSAT with Single-Pass Conveyor Belt (Raw mode - embeddings only)"""
         # Load dataset with specific revision for declarative reproducibility
@@ -63,6 +99,27 @@ class FinesseEvaluator:
 
         length_results = {}  # 길이별 결과 저장: {'sample_results': [dicts], 'num_synth_steps': N}
         for target_length in range(min_length, max_length + 1):
+            # Pre-length check: Estimate if feasible
+            estimated_tokens = target_length * self.config.probe_config.token_per_sample + 100  # +overhead for joins/spaces
+            skip_length = False
+            if self.config.mode != 'merger_mode':
+                if self.config.mode == 'native_mode':
+                    max_ctx = self.config.models.native_embedder.max_context_length
+                else:  # byok_mode
+                    max_ctx = self.config.models.byok_embedder.max_context_length
+                if estimated_tokens > max_ctx:
+                    typer.echo(f"Skipping entire length {target_length}: estimated {estimated_tokens} tokens > {max_ctx} limit.")
+                    length_results[target_length] = {
+                        'sample_results': [],
+                        'num_synth_steps': target_length,
+                        'skipped': True  # Flag for post-processing
+                    }
+                    skip_length = True
+                    continue
+
+            if skip_length:
+                continue
+
             typer.echo(f"probe sequence [{target_length}] in progress ...")
             
             sample_results = []  # List of 25 dicts per length
@@ -80,6 +137,7 @@ class FinesseEvaluator:
                 # 이 테스트를 위해 target_length 개의 청크를 생성
                 chunk_texts = []
                 chunk_token_count = 0
+                is_valid_sample = True
                 
                 # target_length 개의 청크를 생성할 때까지 데이터셋에서 구슬을 가져옴
                 while len(chunk_texts) < target_length:
@@ -126,6 +184,26 @@ class FinesseEvaluator:
                         # 이터레이터가 끝나면 다시 시작
                         iterator = iter(dataset)
                         continue
+
+                # After building, runtime check (for exact after estimate)
+                valid_sample = True
+                if self.config.mode != 'merger_mode':
+                    full_text = ' '.join(chunk_texts)
+                    total_tokens = self.embedder.count_tokens(full_text)
+                    
+                    if self.config.mode == 'native_mode':
+                        max_ctx = self.config.models.native_embedder.max_context_length
+                    else:  # byok_mode
+                        max_ctx = self.config.models.byok_embedder.max_context_length
+                    
+                    if total_tokens > max_ctx:
+                        typer.echo(f"Skipping sample for length {target_length}: {total_tokens} tokens > {max_ctx} limit.")
+                        valid_sample = False
+                        is_valid_sample = False
+
+                if not valid_sample:
+                    continue  # Now safely continue outer loop, advancing to next attempt
+                
                 # 청크들 임베딩 with timing
                 if self.config.mode == 'merger_mode':
                     chunk_times = []

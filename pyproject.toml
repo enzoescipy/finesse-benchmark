@@ -1,6 +1,6 @@
 [project]
 name = "finesse-benchmark"
-version = "0.7.0"
+version = "0.8.0"
 description = "sophisticated evaluation framework designed to assess the performance of long-context embedding models on semantic understanding and information retention"
 authors = [{ name = "winter.sci.dev", email = "enzoescipy@gmail.com" }]
 readme = "README.md"
@@ -9,7 +9,7 @@ dependencies = [
 
     # dependency problem with colab
     "pydantic~=2.11.0",
-    "torch~=2.8.0",
+    "torch==2.8.0",
     "datasets~=4.0.0",
     "pyarrow~=18.1.0",
 
@@ -22,6 +22,7 @@ dependencies = [
     "tiktoken~=0.12.0",
 
     "py-cpuinfo~=9.0.0",
+    "einops~=0.8.1",
 ]
 
 
