@@ -210,13 +210,10 @@ def score_embeddings(
         typer.echo("Error: No length results found in .pt file.")
         raise typer.Exit(code=1)
     
-    final_scores_per_length = {}
+    length_scores = {}
+    all_individual_scores = []
     for target_length, raw in length_results.items():
         sample_results = raw.get('sample_results', [])
-        if not sample_results:
-            final_scores_per_length[target_length] = 0.0
-            continue
-            
         sample_scores = []
         for sample_dict in sample_results:
             probe_embeddings = sample_dict.get('chunk_embeddings')
@@ -234,24 +231,20 @@ def score_embeddings(
             else:
                 sample_scores.append(0.0)
 
-        # Average the scores of all samples for this length
-        avg_length_score = np.mean(sample_scores) if sample_scores else 0.0
-        final_scores_per_length[target_length] = avg_length_score * 500 # Scale after averaging
+        # Store scaled and rounded individual scores as list
+        scaled_scores = [round(score * 500, 6) for score in sample_scores]
+        length_scores[target_length] = scaled_scores
+        all_individual_scores.extend(scaled_scores)
 
-    avg_rss = np.mean(list(final_scores_per_length.values()))
-    
-    # Round scores for precision control (get_content_hash will convert to str)
+    # Average RSS is mean of all individual scaled scores
+    avg_rss = np.mean(all_individual_scores) if all_individual_scores else 0.0
     avg_rss = round(avg_rss, 6)
-    rounded_length_scores = {
-        length: round(score, 6)
-        for length, score in final_scores_per_length.items()
-    }
     
     # Prepare base results without hash
     base_results = {
         'config': config_dict,
         'average_rss': avg_rss,
-        'length_scores': rounded_length_scores,
+        'length_scores': length_scores,
         'metadata': metadata
     }
     
