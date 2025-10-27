@@ -7,15 +7,4 @@ from .implementations import (
     HuggingFaceSynthesizer, 
     MeanPoolingSynthesizer
 )
-
-__version__ = "0.2.0"
-__all__ = [
-    "BenchmarkConfig",
-    "FinesseEvaluator", 
-    "FinesseEmbedder",
-    "FinesseSynthesizer",
-    "HuggingFaceEmbedder",
-    "ByokEmbedder", 
-    "HuggingFaceSynthesizer",
-    "MeanPoolingSynthesizer"
-]
+from .runner import run_benchmark_from_config
