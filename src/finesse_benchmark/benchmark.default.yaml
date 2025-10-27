@@ -55,14 +55,14 @@ models:
 dataset:
   path: "enzoescipy/finesse-benchmark-database"  # HF dataset path
   split: "train"  # Split to use
-  commit_hash: "e76559cba6d9848735ab801c2b6ea08d13d6fb73"
+  commit_hash: "5243368ca627d9f29c9fa2985172857e3302bb7c"
 
 # Probe Configuration
 probe_config:
   sequence_length:
     min: 5  # Minimum sequence length in tokens
     max: 16  # Maximum sequence length in tokens
-  samples_per_length: 1  # Evaluations per length
+  samples_per_length: 5  # Evaluations per length
   token_per_sample : 256  # Number of tokens per chunk
 
 # Advanced Settings
