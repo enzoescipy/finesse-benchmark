@@ -55,6 +55,7 @@ models:
 dataset:
   path: "enzoescipy/finesse-benchmark-database"  # HF dataset path
   split: "train"  # Split to use
+  commit_hash: "e76559cba6d9848735ab801c2b6ea08d13d6fb73"
 
 # Probe Configuration
 probe_config:

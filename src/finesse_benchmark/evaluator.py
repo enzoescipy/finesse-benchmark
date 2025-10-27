@@ -31,17 +31,18 @@ class FinesseEvaluator:
 
     def raw_run(self) -> Dict[str, Any]:
         """Finesse 벤치마크 실행: Stratified CSAT with Single-Pass Conveyor Belt (Raw mode - embeddings only)"""
-        # Load dataset without any version parameter to use default
+        # Load dataset with specific revision for declarative reproducibility
         dataset = load_dataset(
             path=self.config.dataset.path,
-            split=self.config.dataset.split
+            split=self.config.dataset.split,
+            revision=self.config.dataset.commit_hash
         )
 
-        # Capture dataset metadata
+        # Capture dataset metadata from config declaration
         dataset_metadata = {
             'path': self.config.dataset.path,
             'split': self.config.dataset.split,
-            'commit_hash': getattr(dataset.info, 'revision', 'default')
+            'commit_hash': self.config.dataset.commit_hash
         }
 
         # Shuffle dataset deterministically for reproducibility

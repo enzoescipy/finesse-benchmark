@@ -56,6 +56,7 @@ models:
 dataset:
   path: "enzoescipy/finesse-benchmark-database"  # Official dataset
   split: "train"  # Use train split for consistency
+  commit_hash: "e76559cba6d9848735ab801c2b6ea08d13d6fb73"
 
 # Probe Configuration (Standard for Leaderboard)
 # Balances short-to-medium sequence evaluation with sufficient samples for statistical significance
