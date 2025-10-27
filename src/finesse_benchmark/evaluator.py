@@ -7,6 +7,7 @@ import typer
 import tiktoken
 import warnings
 from transformers import AutoTokenizer
+import importlib.metadata
 
 from .config import BenchmarkConfig
 from .scoring import calculate_self_attestation_scores, calculate_self_attestation_scores_bottom_up
@@ -35,6 +36,13 @@ class FinesseEvaluator:
             path=self.config.dataset.path,
             split=self.config.dataset.split
         )
+
+        # Capture dataset metadata
+        dataset_metadata = {
+            'path': self.config.dataset.path,
+            'split': self.config.dataset.split,
+            'commit_hash': getattr(dataset.info, 'revision', 'default')
+        }
 
         # Shuffle dataset deterministically for reproducibility
         if self.config.seed is not None:
@@ -111,7 +119,6 @@ class FinesseEvaluator:
                                 break
                         
 
-                    
                     except (StopIteration, KeyError):
                         # 이터레이터가 끝나면 다시 시작
                         iterator = iter(dataset)
@@ -162,8 +169,23 @@ class FinesseEvaluator:
                 'num_synth_steps': target_length
             }
 
+        # Add metadata for provenance
+        try:
+            version = importlib.metadata.version('finesse-benchmark')
+            package_metadata = {'finesse-benchmark': version}
+        except importlib.metadata.PackageNotFoundError:
+            package_metadata = {'finesse-benchmark': 'unknown'}
+        except Exception as e:
+            package_metadata = {'finesse-benchmark': f'error: {str(e)}'}
+
+        metadata = {
+            'package_versions': package_metadata,
+            'dataset': dataset_metadata
+        }
+
         return {
             'config': self.config.model_dump(),
+            'metadata': metadata,
             'raw_results': {
                 'length_results': length_results
             }

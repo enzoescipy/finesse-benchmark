@@ -203,6 +203,7 @@ def score_embeddings(
     
     raw_data = torch.load(pt_path)
     config_dict = raw_data['config']
+    metadata = raw_data.get('metadata', {})
     length_results = raw_data.get('raw_results', {}).get('length_results', {})
     
     if not length_results:
@@ -250,7 +251,8 @@ def score_embeddings(
     base_results = {
         'config': config_dict,
         'average_rss': avg_rss,
-        'length_scores': rounded_length_scores
+        'length_scores': rounded_length_scores,
+        'metadata': metadata
     }
     
     # Compute model hash for notarization (before content_hash)
