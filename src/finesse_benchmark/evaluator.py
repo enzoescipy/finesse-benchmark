@@ -231,23 +231,14 @@ class FinesseEvaluator:
                 if self.config.mode == 'merger_mode':
                     chunk_times = []
                     chunk_embeddings_list = []
-                    use_gpu_timing = torch.cuda.is_available()
                     for text in chunk_texts:
                         single_texts = [text]
-                        if use_gpu_timing:
-                            start = torch.cuda.Event(enable_timing=True)
-                            start.record()
-                        else:
-                            start_cpu = time.perf_counter()
+                        start_time = time.monotonic()
                         single_emb_tensor = self.embedder.encode(single_texts)
-                        if use_gpu_timing:
-                            end = torch.cuda.Event(enable_timing=True)
-                            end.record()
+                        if torch.cuda.is_available():
                             torch.cuda.synchronize()
-                            elapsed_ms = start.elapsed_time(end)
-                        else:
-                            end_cpu = time.perf_counter()
-                            elapsed_ms = (end_cpu - start_cpu) * 1000
+                        end_time = time.monotonic()
+                        elapsed_ms = (end_time - start_time) * 1000
                         chunk_times.append(elapsed_ms)
                         chunk_embeddings_list.append(single_emb_tensor[0].cpu())
                     chunk_embeddings = chunk_embeddings_list
@@ -257,33 +248,21 @@ class FinesseEvaluator:
                     chunk_embeddings = [chunk_embeddings_tensor[i].cpu() for i in range(chunk_embeddings_tensor.size(0))]
                 
                 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-                use_gpu_timing = torch.cuda.is_available()
                 synthesis_embeddings = []
                 synth_times = []
                 cumulative_embeddings = torch.empty((0, chunk_embeddings[0].shape[0]), dtype=chunk_embeddings[0].dtype, device=device)
-
-                cpu_elapsed_list = []
-                synth_start_events = []
-                synth_end_events = []
 
                 for i, emb in enumerate(chunk_embeddings):
                     single_on_device = emb.to(device)
                     cumulative_embeddings = torch.cat([cumulative_embeddings, single_on_device.unsqueeze(0)], dim=0)
                     partial_embs = cumulative_embeddings.unsqueeze(0)  # (1, i+1, D)
-                    if use_gpu_timing:
-                        start = torch.cuda.Event(enable_timing=True)
-                        start.record()
-                        synth_start_events.append(start)
-                        synth_emb = self.synthesizer.synthesize(partial_embs).squeeze(0)
-                        end = torch.cuda.Event(enable_timing=True)
-                        end.record()
-                        synth_end_events.append(end)
-                    else:
-                        start_cpu = time.perf_counter()
-                        synth_emb = self.synthesizer.synthesize(partial_embs).squeeze(0)
-                        end_cpu = time.perf_counter()
-                        elapsed_ms = (end_cpu - start_cpu) * 1000
-                        cpu_elapsed_list.append(elapsed_ms)
+                    start_time = time.monotonic()
+                    synth_emb = self.synthesizer.synthesize(partial_embs).squeeze(0)
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                    end_time = time.monotonic()
+                    elapsed_ms = (end_time - start_time) * 1000
+                    synth_times.append(0.0 if i == 0 else elapsed_ms)
                     synth_emb_cpu = synth_emb.cpu()
 
                     # Validate synthesizer output: must be 1D tensor (d_model,)
@@ -301,17 +280,6 @@ class FinesseEvaluator:
 
                 del cumulative_embeddings  # Final cleanup
                 
-                # Compute synth_times
-                if use_gpu_timing:
-                    torch.cuda.synchronize()
-                    for i in range(len(chunk_embeddings)):
-                        elapsed_ms = synth_start_events[i].elapsed_time(synth_end_events[i])
-                        synth_times.append(0.0 if i == 0 else elapsed_ms)
-                else:
-                    for i in range(len(chunk_embeddings)):
-                        elapsed_ms = cpu_elapsed_list[i]
-                        synth_times.append(0.0 if i == 0 else elapsed_ms)
-
                 # 샘플 결과 저장
                 sample_dict = {
                     'chunk_embeddings': chunk_embeddings,
