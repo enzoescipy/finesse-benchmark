@@ -7,7 +7,9 @@
 
 # Do NOT modify this file for submissions. Use it as-is for standardized scoring.
 
-mode: "merger_mode"  # Standard: merger_mode for sequence-merger evaluations. Change only if comparing native/BYOK modes explicitly.
+mode: "merger_mode"  # Options: "merger_mode", "native_mode", or "byok_mode"
+
+# Standard: merger_mode for sequence-merger evaluations. Change only if comparing native/BYOK modes explicitly.
 
 # Models Configuration (Standard for Leaderboard)
 models:

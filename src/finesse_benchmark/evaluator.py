@@ -75,6 +75,7 @@ class FinesseEvaluator:
         """Finesse 벤치마크 실행: Stratified CSAT with Single-Pass Conveyor Belt (Raw mode - embeddings only)"""
         
         dataset = self._dataset_prepare_and_validate()
+        iterator = iter(dataset)
 
         # Find ctx
         max_ctx = None
@@ -96,6 +97,7 @@ class FinesseEvaluator:
         # All warm-up results discarded; models now warmed up
 
         length_results = {}  # 길이별 결과 저장: {'sample_results': [dicts], 'num_synth_steps': N}
+
         for target_length in range(min_length, max_length + 1):
             # Pre-length check: Estimate if feasible
             estimated_tokens = target_length * self.config.probe_config.token_per_sample + 100  # +overhead for joins/spaces
@@ -128,7 +130,7 @@ class FinesseEvaluator:
                 typer.echo(f"probe sequence [{target_length}] in progress ({len(sample_results)}/{self.config.probe_config.samples_per_length})...")
 
                 # 이 테스트를 위해 target_length 개의 청크를 생성
-                chunk_texts = self._get_text_chunck_from_database(target_length=target_length, dataset=dataset)
+                chunk_texts = self._get_text_chunck_from_database(target_length=target_length, dataset=dataset, iterator=iterator)
 
                 # After building, runtime check (for exact after estimate)
                 valid_sample = True
@@ -201,6 +203,7 @@ class FinesseEvaluator:
         """Finesse 벤치마크 실행: Stratified CSAT with Single-Pass Conveyor Belt (Raw mode - embeddings only)"""
         # Load dataset with specific revision for declarative reproducibility
         dataset = self._dataset_prepare_and_validate()
+        iterator = iter(dataset)
 
         # find min, max length
         min_length, max_length = self.config.probe_config.sequence_length.min, self.config.probe_config.sequence_length.max
@@ -228,6 +231,7 @@ class FinesseEvaluator:
         # All warm-up results discarded; models now warmed up
 
         length_results = {}  # 길이별 결과 저장: {'sample_results': [dicts], 'num_synth_steps': N}
+
         for target_length in range(min_length, max_length + 1):
             typer.echo(f"probe sequence [{target_length}] in progress ...")
             
@@ -244,7 +248,7 @@ class FinesseEvaluator:
                 typer.echo(f"probe sequence [{target_length}] in progress ({len(sample_results)}/{self.config.probe_config.samples_per_length})...")
 
                 # 이 테스트를 위해 target_length 개의 청크를 생성
-                chunk_texts = self._get_text_chunck_from_database(target_length=target_length, dataset=dataset)
+                chunk_texts = self._get_text_chunck_from_database(target_length=target_length, dataset=dataset, iterator=iterator)
 
                 # 청크들 임베딩 with timing
                 chunk_times = []
@@ -384,11 +388,10 @@ class FinesseEvaluator:
 
         return dataset
 
-    def _get_text_chunck_from_database(self, target_length:int, dataset:Any) -> List[str]:
+    def _get_text_chunck_from_database(self, target_length:int, dataset:Any, iterator:Any) -> List[str]:
         # 이 테스트를 위해 target_length 개의 청크를 생성
         chunk_texts = []
         chunk_token_count = 0
-        iterator = iter(dataset)
         
         # target_length 개의 청크를 생성할 때까지 데이터셋에서 구슬을 가져옴
         while len(chunk_texts) < target_length:
