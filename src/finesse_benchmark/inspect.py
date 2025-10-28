@@ -11,7 +11,6 @@ def generate_heatmap_for_length(
     length: int,
     mode: str,
     output_dir: str,
-    num_samples: int = 25
 ):
     """
     Generate cosine similarity heatmap visualizations from raw sample results.
@@ -21,7 +20,6 @@ def generate_heatmap_for_length(
         length: Target sequence length
         mode: 'average', 'best', 'worst', or 'stddev'
         output_dir: Directory to save the plot
-        num_samples: Number of samples processed (for title)
     """
     
     if not sample_results:
@@ -45,8 +43,8 @@ def generate_heatmap_for_length(
             raise ValueError(f"No valid embeddings found for length {length}")
         
         # Stack all samples and average
-        chunk_embeddings_3d = torch.stack(all_chunk_embs)  # (num_samples, N, D)
-        synth_embeddings_3d = torch.stack(all_synth_embs)  # (num_samples, N, D)
+        chunk_embeddings_3d = torch.stack(all_chunk_embs)  
+        synth_embeddings_3d = torch.stack(all_synth_embs) 
         
         chunk_embeddings = chunk_embeddings_3d.mean(dim=0)  # (N, D)
         synth_embeddings = synth_embeddings_3d.mean(dim=0)  # (N, D)
@@ -111,8 +109,8 @@ def generate_heatmap_for_length(
             raise ValueError(f"No valid embeddings found for length {length}")
         
         # Stack all samples and calculate stddev
-        chunk_embeddings_3d = torch.stack(all_chunk_embs)  # (num_samples, N, D)
-        synth_embeddings_3d = torch.stack(all_synth_embs)  # (num_samples, N, D)
+        chunk_embeddings_3d = torch.stack(all_chunk_embs)  
+        synth_embeddings_3d = torch.stack(all_synth_embs)  
         
         chunk_embeddings = chunk_embeddings_3d.std(dim=0)  # (N, D)
         synth_embeddings = synth_embeddings_3d.std(dim=0)  # (N, D)
@@ -164,7 +162,7 @@ def generate_heatmap_for_length(
     
     return filepath
 
-def generate_timeline_plot_for_length(sample_results, length, mode, output_dir, num_samples):
+def generate_timeline_plot_for_length(sample_results, length, mode, output_dir):
     # Validate mode
     if mode not in ['worst', 'best', 'average', 'stddev']:
         raise ValueError(f"Invalid time mode: {mode}. Must be worst, best, average, or stddev.")
@@ -209,8 +207,8 @@ def generate_timeline_plot_for_length(sample_results, length, mode, output_dir, 
         
         title_suffix = f' {mode.upper()} Case'
     else:  # average or stddev
-        all_chunk_times = np.array(all_chunk_times)  # (num_samples, length)
-        all_synth_times = np.array(all_synth_times)  # (num_samples, up to length)
+        all_chunk_times = np.array(all_chunk_times)  
+        all_synth_times = np.array(all_synth_times)  
         
         if mode == 'average':
             chunk_plot = np.mean(all_chunk_times, axis=0)
@@ -222,7 +220,7 @@ def generate_timeline_plot_for_length(sample_results, length, mode, output_dir, 
         steps = np.arange(1, length + 1)
         synth_plot = synth_plot[:length]  # Ensure length match
         
-        title_suffix = f' {mode.upper()} Across {num_samples} Samples'
+        title_suffix = f'{mode.upper()}'
     
     # Create the dual timeline plot
     plt.figure(figsize=(10, 6))

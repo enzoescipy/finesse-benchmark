@@ -1,4 +1,4 @@
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import torch
 import time
 from datasets import load_dataset
@@ -27,6 +27,8 @@ class FinesseEvaluator:
             synthesizer_engine: 합성을 담당하는 엔진 객체
             config: 벤치마크 설정
         """
+        self.chunk_concat_sep = ' '
+
         self.config = config
         self.embedder = embedder_engine
         self.synthesizer = synthesizer_engine
@@ -67,57 +69,30 @@ class FinesseEvaluator:
                     f"Samples exceeding limit will be automatically skipped during evaluation."
                 )
 
-    def raw_run(self) -> Dict[str, Any]:
+
+
+    def native_run(self) -> Dict[str, Any]:
         """Finesse 벤치마크 실행: Stratified CSAT with Single-Pass Conveyor Belt (Raw mode - embeddings only)"""
-        # Load dataset with specific revision for declarative reproducibility
-        dataset = load_dataset(
-            path=self.config.dataset.path,
-            split=self.config.dataset.split,
-            revision=self.config.dataset.commit_hash
-        )
+        
+        dataset = self._dataset_prepare_and_validate()
 
-        # Capture dataset metadata from config declaration
-        dataset_metadata = {
-            'path': self.config.dataset.path,
-            'split': self.config.dataset.split,
-            'commit_hash': self.config.dataset.commit_hash
-        }
+        # Find ctx
+        max_ctx = None
+        if self.config.mode == 'native_mode':
+            max_ctx = self.config.models.native_embedder.max_context_length
+        else:  # byok_mode
+            max_ctx = self.config.models.byok_embedder.max_context_length
 
-        # Shuffle dataset deterministically for reproducibility
-        if self.config.seed is not None:
-            dataset = dataset.shuffle(seed=self.config.seed)
-
-        if self.config.dataset.num_samples:
-            dataset = dataset.select(range(self.config.dataset.num_samples))
-
-        # 단일 이터레이터 생성: 컨베이어 벨트 원칙
-        iterator = iter(dataset)
+        # find min, max length
         min_length, max_length = self.config.probe_config.sequence_length.min, self.config.probe_config.sequence_length.max
-        total_needed_samples = (max_length - min_length + 1) * self.config.probe_config.samples_per_length
-        if len(dataset) < total_needed_samples:
-            raise ValueError(f"데이터셋 크기({len(dataset)})가 필요 샘플({total_needed_samples})보다 작음. 더 많은 데이터 필요.")
-
+        
         # Warm-up phase: Initialize models with dummy data to avoid cold-start latency
         dummy_samples = [
             "This is a warm-up dummy sentence 1.",
             "This is a warm-up dummy sentence 2."
         ]
-        if self.config.mode == 'merger_mode':
-            # Warm-up embedder
-            _ = self.embedder.encode(dummy_samples)
-            # Warm-up synthesizer incrementally
-            device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            dummy_embs = self.embedder.encode(dummy_samples)
-            cumulative = torch.empty((0, dummy_embs.shape[1]), dtype=dummy_embs.dtype, device=device)
-            for emb in dummy_embs:
-                single_on_device = emb.unsqueeze(0).to(device)
-                cumulative = torch.cat([cumulative, single_on_device], dim=0)
-                partial_embs = cumulative.unsqueeze(0)  # (1, i+1, D)
-                _ = self.synthesizer.synthesize(partial_embs).squeeze(0)
-            del cumulative  # Cleanup
-        else:
-            # For native_mode or byok_mode: Warm-up embedder only
-            _ = self.embedder.encode(dummy_samples)
+        _ = self.embedder.encode(dummy_samples)
+
         # All warm-up results discarded; models now warmed up
 
         length_results = {}  # 길이별 결과 저장: {'sample_results': [dicts], 'num_synth_steps': N}
@@ -125,31 +100,26 @@ class FinesseEvaluator:
             # Pre-length check: Estimate if feasible
             estimated_tokens = target_length * self.config.probe_config.token_per_sample + 100  # +overhead for joins/spaces
             skip_length = False
-            if self.config.mode != 'merger_mode':
-                if self.config.mode == 'native_mode':
-                    max_ctx = self.config.models.native_embedder.max_context_length
-                else:  # byok_mode
-                    max_ctx = self.config.models.byok_embedder.max_context_length
-                if estimated_tokens > max_ctx:
-                    typer.echo(f"Skipping entire length {target_length}: estimated {estimated_tokens} tokens > {max_ctx} limit.")
-                    length_results[target_length] = {
-                        'sample_results': [],
-                        'num_synth_steps': target_length,
-                        'skipped': True  # Flag for post-processing
-                    }
-                    skip_length = True
-                    continue
+            if estimated_tokens > max_ctx:
+                typer.echo(f"Skipping entire length {target_length}: estimated {estimated_tokens} tokens > {max_ctx} limit.")
+                length_results[target_length] = {
+                    'sample_results': [],
+                    'num_synth_steps': target_length,
+                    'skipped': True  # Flag for post-processing
+                }
+                skip_length = True
+                continue
 
             if skip_length:
                 continue
 
             typer.echo(f"probe sequence [{target_length}] in progress ...")
             
-            sample_results = []  # List of 25 dicts per length
+            sample_results = []  
             attempts = 0
             max_attempts = len(dataset)  # 데이터셋 전체를 최대 시도 횟수로
             
-            # 진정한 원칙: target_length 개의 청크로 구성된 시퀀스를 samples_per_length번 테스트
+            # target_length 개의 청크로 구성된 시퀀스를 samples_per_length번 테스트
             while len(sample_results) < self.config.probe_config.samples_per_length:
                 attempts += 1
                 if attempts > max_attempts:
@@ -158,95 +128,139 @@ class FinesseEvaluator:
                 typer.echo(f"probe sequence [{target_length}] in progress ({len(sample_results)}/{self.config.probe_config.samples_per_length})...")
 
                 # 이 테스트를 위해 target_length 개의 청크를 생성
-                chunk_texts = []
-                chunk_token_count = 0
-                is_valid_sample = True
-                
-                # target_length 개의 청크를 생성할 때까지 데이터셋에서 구슬을 가져옴
-                while len(chunk_texts) < target_length:
-                    try:
-                        sample = next(iterator)
-                        beads = sample['beads']
-                        
-                        # 구슬이 없으면 다음 샘플로
-                        if not beads:
-                            continue
-                        
-                        # 이 샘플에서 하나의 청크 생성
-                        current_chunk = []
-                        current_token_count = 0
-                        target_token_size = self.config.probe_config.token_per_sample
-                        
-                        for bead_text in beads:
-                            bead_token_count = self.embedder.count_tokens(bead_text)
-                            
-                            # 토큰 수가 초과하면 정확히 잘라서 청크 완성
-                            if current_token_count + bead_token_count > target_token_size:
-                                tokens_needed = target_token_size - current_token_count
-                                if tokens_needed > 0:
-                                    needed_text = self.embedder.chunk_text(bead_text, tokens_needed)
-                                    current_chunk.append(needed_text)
-                                
-                                # 청크 완성
-                                chunk_texts.append(' '.join(current_chunk))
-                                chunk_token_count += target_token_size
-                                break
-                            
-                            # 청크에 구슬 추가
-                            current_chunk.append(bead_text)
-                            current_token_count += bead_token_count
-                            
-                            # 정확히 타겟 토큰 수에 도달하면 청크 완성
-                            if current_token_count == target_token_size:
-                                chunk_texts.append(' '.join(current_chunk))
-                                chunk_token_count += target_token_size
-                                break
-                        
-
-                    except (StopIteration, KeyError):
-                        # 이터레이터가 끝나면 다시 시작
-                        iterator = iter(dataset)
-                        continue
+                chunk_texts = self._get_text_chunck_from_database(target_length=target_length, dataset=dataset)
 
                 # After building, runtime check (for exact after estimate)
                 valid_sample = True
-                if self.config.mode != 'merger_mode':
-                    full_text = ' '.join(chunk_texts)
-                    total_tokens = self.embedder.count_tokens(full_text)
-                    
-                    if self.config.mode == 'native_mode':
-                        max_ctx = self.config.models.native_embedder.max_context_length
-                    else:  # byok_mode
-                        max_ctx = self.config.models.byok_embedder.max_context_length
-                    
-                    if total_tokens > max_ctx:
-                        typer.echo(f"Skipping sample for length {target_length}: {total_tokens} tokens > {max_ctx} limit.")
-                        valid_sample = False
-                        is_valid_sample = False
+                full_text = self.chunk_concat_sep.join(chunk_texts)
+                total_tokens = self.embedder.count_tokens(full_text)
+                
+                if total_tokens > max_ctx:
+                    typer.echo(f"Skipping sample for length {target_length}: {total_tokens} tokens > {max_ctx} limit.")
+                    valid_sample = False
 
                 if not valid_sample:
                     continue  # Now safely continue outer loop, advancing to next attempt
                 
-                # 청크들 임베딩 with timing
-                if self.config.mode == 'merger_mode':
-                    chunk_times = []
-                    chunk_embeddings_list = []
-                    for text in chunk_texts:
-                        single_texts = [text]
-                        start_time = time.monotonic()
-                        single_emb_tensor = self.embedder.encode(single_texts)
-                        if torch.cuda.is_available():
-                            torch.cuda.synchronize()
-                        end_time = time.monotonic()
-                        elapsed_ms = (end_time - start_time) * 1000
-                        chunk_times.append(elapsed_ms)
-                        chunk_embeddings_list.append(single_emb_tensor[0].cpu())
-                    chunk_embeddings = chunk_embeddings_list
-                else:
-                    chunk_times = None
-                    chunk_embeddings_tensor = self.embedder.encode(chunk_texts)
-                    chunk_embeddings = [chunk_embeddings_tensor[i].cpu() for i in range(chunk_embeddings_tensor.size(0))]
+                # 청크들 임베딩 without timing
+                chunk_times = None
+                chunk_embeddings_tensor = self.embedder.encode(chunk_texts)
+                chunk_embeddings = [chunk_embeddings_tensor[i].cpu() for i in range(chunk_embeddings_tensor.size(0))]
+
+                # 청크 합성 with timing: Embed cumulative texts progressively
+                synthesis_embeddings = []
+                synth_times = []
+                cumulative_text = ""
+
+                for i, text in enumerate(chunk_texts):
+                    if i > 0:
+                        cumulative_text += self.chunk_concat_sep
+                    cumulative_text += text
+
+                    start_time = time.monotonic()
+                    synth_emb_tensor = self.embedder.encode([cumulative_text])
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                    end_time = time.monotonic()
+                    elapsed_ms = (end_time - start_time) * 1000
+                    synth_times.append(elapsed_ms)  # Record actual time for each cumulative embedding
+
+                    synth_emb_cpu = synth_emb_tensor[0].cpu()  # Take the first (and only) embedding
+
+                    # Validate embedder output: must be 1D tensor (d_model,)
+                    if synth_emb_cpu.dim() != 1:
+                        raise ValueError(
+                            f"Embedder contract violation: encode() must return a 1D tensor per input, "
+                            f"but instead returned a {synth_emb_cpu.dim()}-dimensional tensor with shape {synth_emb_cpu.shape}. "
+                            "Please check your embedder's output format."
+                        )
+
+                    synthesis_embeddings.append(synth_emb_cpu)
+
+                    # Clean up GPU tensors to prevent memory accumulation
+                    del synth_emb_tensor
+
+                # 샘플 결과 저장
+                sample_dict = {
+                    'chunk_embeddings': chunk_embeddings,
+                    'synthesis_embeddings': synthesis_embeddings,
+                    'chunk_times': chunk_times,
+                    'synth_times': synth_times
+                }
+                sample_results.append(sample_dict)
+
+            # 이 길이에 대한 결과 저장
+            length_results[target_length] = {
+                'sample_results': sample_results,
+                'num_synth_steps': target_length
+            }
+
+        return self._package_metadata_data(length_results=length_results)
+
+    def merger_run(self) -> Dict[str, Any]:
+        """Finesse 벤치마크 실행: Stratified CSAT with Single-Pass Conveyor Belt (Raw mode - embeddings only)"""
+        # Load dataset with specific revision for declarative reproducibility
+        dataset = self._dataset_prepare_and_validate()
+
+        # find min, max length
+        min_length, max_length = self.config.probe_config.sequence_length.min, self.config.probe_config.sequence_length.max
+
+
+        # Warm-up phase: Initialize models with dummy data to avoid cold-start latency
+        dummy_samples = [
+            "This is a warm-up dummy sentence 1.",
+            "This is a warm-up dummy sentence 2."
+        ]
+
+        # Warm-up embedder
+        _ = self.embedder.encode(dummy_samples)
+        # Warm-up synthesizer incrementally
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        dummy_embs = self.embedder.encode(dummy_samples)
+        cumulative = torch.empty((0, dummy_embs.shape[1]), dtype=dummy_embs.dtype, device=device)
+        for emb in dummy_embs:
+            single_on_device = emb.unsqueeze(0).to(device)
+            cumulative = torch.cat([cumulative, single_on_device], dim=0)
+            partial_embs = cumulative.unsqueeze(0)  # (1, i+1, D)
+            _ = self.synthesizer.synthesize(partial_embs).squeeze(0)
+        del cumulative  # Cleanup
+
+        # All warm-up results discarded; models now warmed up
+
+        length_results = {}  # 길이별 결과 저장: {'sample_results': [dicts], 'num_synth_steps': N}
+        for target_length in range(min_length, max_length + 1):
+            typer.echo(f"probe sequence [{target_length}] in progress ...")
+            
+            sample_results = []  # List of 25 dicts per length
+            attempts = 0
+            max_attempts = len(dataset)  # 데이터셋 전체를 최대 시도 횟수로
+            
+            # target_length 개의 청크로 구성된 시퀀스를 samples_per_length번 테스트
+            while len(sample_results) < self.config.probe_config.samples_per_length:
+                attempts += 1
+                if attempts > max_attempts:
+                    raise ValueError(f"데이터셋 소진: target_length={target_length}에서 충분한 샘플을 찾을 수 없음. {len(sample_results)}/{self.config.probe_config.samples_per_length}개만 생성됨.")
                 
+                typer.echo(f"probe sequence [{target_length}] in progress ({len(sample_results)}/{self.config.probe_config.samples_per_length})...")
+
+                # 이 테스트를 위해 target_length 개의 청크를 생성
+                chunk_texts = self._get_text_chunck_from_database(target_length=target_length, dataset=dataset)
+
+                # 청크들 임베딩 with timing
+                chunk_times = []
+                chunk_embeddings_list = []
+                for text in chunk_texts:
+                    single_texts = [text]
+                    start_time = time.monotonic()
+                    single_emb_tensor = self.embedder.encode(single_texts)
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                    end_time = time.monotonic()
+                    elapsed_ms = (end_time - start_time) * 1000
+                    chunk_times.append(elapsed_ms)
+                    chunk_embeddings_list.append(single_emb_tensor[0].cpu())
+                chunk_embeddings = chunk_embeddings_list
+
                 device = 'cuda' if torch.cuda.is_available() else 'cpu'
                 synthesis_embeddings = []
                 synth_times = []
@@ -295,6 +309,9 @@ class FinesseEvaluator:
                 'num_synth_steps': target_length
             }
 
+        return self._package_metadata_data(length_results=length_results)
+
+    def _package_metadata_data(self, length_results:Dict[int, Any]) -> Dict[str, Any]:
         # Add metadata for provenance
         try:
             version = importlib.metadata.version('finesse-benchmark')
@@ -325,6 +342,13 @@ class FinesseEvaluator:
         # Torch version
         device_info['torch_version'] = torch.__version__
 
+        # Capture dataset metadata from config declaration
+        dataset_metadata = {
+            'path': self.config.dataset.path,
+            'split': self.config.dataset.split,
+            'commit_hash': self.config.dataset.commit_hash
+        }
+
         metadata = {
             'package_versions': package_metadata,
             'dataset': dataset_metadata,
@@ -339,6 +363,81 @@ class FinesseEvaluator:
                 'length_results': length_results
             }
         }
+
+
+    def _dataset_prepare_and_validate(self) -> Any:
+        # Load dataset with specific revision for declarative reproducibility
+        dataset = load_dataset(
+            path=self.config.dataset.path,
+            split=self.config.dataset.split,
+            revision=self.config.dataset.commit_hash
+        )
+
+        # Shuffle dataset deterministically for reproducibility
+        if self.config.seed is not None:
+            dataset = dataset.shuffle(seed=self.config.seed)
+
+        min_length, max_length = self.config.probe_config.sequence_length.min, self.config.probe_config.sequence_length.max
+        total_needed_samples = (max_length - min_length + 1) * self.config.probe_config.samples_per_length
+        if len(dataset) < total_needed_samples:
+            raise ValueError(f"데이터셋 크기({len(dataset)})가 필요 샘플({total_needed_samples})보다 작음. 더 많은 데이터 필요.")
+
+        return dataset
+
+    def _get_text_chunck_from_database(self, target_length:int, dataset:Any) -> List[str]:
+        # 이 테스트를 위해 target_length 개의 청크를 생성
+        chunk_texts = []
+        chunk_token_count = 0
+        iterator = iter(dataset)
+        
+        # target_length 개의 청크를 생성할 때까지 데이터셋에서 구슬을 가져옴
+        while len(chunk_texts) < target_length:
+            try:
+                sample = next(iterator)
+                beads = sample['beads']
+                
+                # 구슬이 없으면 다음 샘플로
+                if not beads:
+                    continue
+                
+                # 이 샘플에서 하나의 청크 생성
+                current_chunk = []
+                current_token_count = 0
+                target_token_size = self.config.probe_config.token_per_sample
+                
+                for bead_text in beads:
+                    bead_token_count = self.embedder.count_tokens(bead_text)
+                    
+                    # 토큰 수가 초과하면 정확히 잘라서 청크 완성
+                    if current_token_count + bead_token_count > target_token_size:
+                        tokens_needed = target_token_size - current_token_count
+                        if tokens_needed > 0:
+                            needed_text = self.embedder.chunk_text(bead_text, tokens_needed)
+                            current_chunk.append(needed_text)
+                        
+                        # 청크 완성
+                        chunk_texts.append(self.chunk_concat_sep.join(current_chunk))
+                        chunk_token_count += target_token_size
+                        break
+                    
+                    # 청크에 구슬 추가
+                    current_chunk.append(bead_text)
+                    current_token_count += bead_token_count
+                    
+                    # 정확히 타겟 토큰 수에 도달하면 청크 완성
+                    if current_token_count == target_token_size:
+                        chunk_texts.append(self.chunk_concat_sep.join(current_chunk))
+                        chunk_token_count += target_token_size
+                        break
+                
+
+            except (StopIteration, KeyError):
+                # 이터레이터가 끝나면 다시 시작
+                iterator = iter(dataset)
+                continue
+
+        
+        return chunk_texts
 
     def _setup_token_counter(self):
         """모드에 따라 적절한 토큰 카운터를 설정한다."""

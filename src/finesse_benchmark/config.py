@@ -44,7 +44,6 @@ class DatasetConfig(BaseModel):
     path: str = Field(default="enzoescipy/finesse-benchmark-database", description="HF 데이터셋 경로")
     split: str = Field(default="train")
     commit_hash: str = Field(..., description="Hugging Face 데이터셋의 revision/commit_hash. 재현성을 위해 필수.")
-    num_samples: int = Field(default=10000)
 
 class OutputConfig(BaseModel):
     format: str = Field(default="json")

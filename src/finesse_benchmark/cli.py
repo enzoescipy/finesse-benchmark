@@ -22,7 +22,6 @@ def generate_raw_data(
     config_path: str = typer.Option(..., "--config", help="Path to benchmark.yaml config file"),
     dataset_path: Optional[str] = typer.Option(None, help="Override HF dataset path"),
     output_dir: str = typer.Option("results", "--output", help="Directory to save raw embedding data"),
-    num_samples: Optional[int] = typer.Option(None, "--samples", help="Number of samples per sequence length"),
     num_seed: Optional[int] = typer.Option(None, "--seed", help="Random seed for dataset shuffling reproducibility"),
 ):
     """
@@ -75,8 +74,6 @@ def generate_raw_data(
     # Override if provided
     if dataset_path:
         config.dataset.path = dataset_path
-    if num_samples:
-        config.probe_config.samples_per_length = num_samples
     if num_seed:
         config.seed = num_seed
     
@@ -99,7 +96,7 @@ def generate_raw_data(
     typer.echo("Initializing FinesseEvaluator...")
     
     # Import the engine implementations
-    from .implementations import HuggingFaceEmbedder, ByokEmbedder, HuggingFaceSynthesizer, MeanPoolingSynthesizer
+    from .implementations import HuggingFaceEmbedder, ByokEmbedder, HuggingFaceSynthesizer, NullSynthesizer
     
     # Initialize embedder and synthesizer based on mode
     if config.mode == 'merger_mode':
@@ -120,7 +117,7 @@ def generate_raw_data(
             config.models.native_embedder.name,
             max_length=config.models.native_embedder.max_context_length
         )
-        synthesizer = MeanPoolingSynthesizer()
+        synthesizer = NullSynthesizer()
         typer.echo(f"  Embedder: {config.models.native_embedder.name}")
         typer.echo("  Synthesizer: pass-through")
     
@@ -136,7 +133,7 @@ def generate_raw_data(
             model_name=config.models.byok_embedder.name,
             tokenizer_path=config.models.byok_embedder.tokenizer_path
         )
-        synthesizer = MeanPoolingSynthesizer()
+        synthesizer = NullSynthesizer()
         typer.echo(f"  Embedder: {config.models.byok_embedder.provider}/{config.models.byok_embedder.name}")
         typer.echo("  Synthesizer: pass-through")
     
@@ -149,7 +146,11 @@ def generate_raw_data(
 
     # Run raw evaluation
     typer.echo("Generating raw embeddings...")
-    raw_data = evaluator.raw_run()
+    raw_data = None
+    if config.mode == "merger_mode":
+        raw_data = evaluator.merger_run()
+    else:
+        raw_data = evaluator.native_run()
     
     # Save full raw data (config + raw_results) to .pt file
     dataset_name = config.dataset.path.split('/')[-1]
@@ -816,7 +817,6 @@ def inspect(
                         length=avail_len,
                         mode=internal_mode,
                         output_dir=output_dir,
-                        num_samples=len(sample_results)
                     )
                 else:
                     filename = generate_heatmap_for_length(
@@ -824,7 +824,6 @@ def inspect(
                         length=avail_len,
                         mode=mode,
                         output_dir=output_dir,
-                        num_samples=len(sample_results)
                     )
                 plot_paths.append(filename)
                 typer.echo(f"Generated {'timeline plot' if mode.endswith('-time') else 'heatmap'} for length {avail_len} with mode {mode}")
@@ -854,15 +853,13 @@ def inspect(
                     length=length,
                     mode=internal_mode,
                     output_dir=output_dir,
-                    num_samples=len(sample_results)
                 )
             else:
                 filename = generate_heatmap_for_length(
                     sample_results=sample_results,
                     length=length,
                     mode=mode,
-                    output_dir=output_dir,
-                    num_samples=len(sample_results)
+                    output_dir=output_dir
                 )
             plot_paths.append(filename)
             typer.echo(f"Generated {'timeline plot' if mode.endswith('-time') else 'heatmap'} for length {length} with mode {mode}")

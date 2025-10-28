@@ -5,6 +5,6 @@ from .implementations import (
     HuggingFaceEmbedder, 
     ByokEmbedder, 
     HuggingFaceSynthesizer, 
-    MeanPoolingSynthesizer
+    NullSynthesizer
 )
 from .runner import run_benchmark_from_config

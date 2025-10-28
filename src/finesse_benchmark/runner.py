@@ -58,7 +58,6 @@ def run_benchmark_from_config(
         config_path=config_path,
         dataset_path=None,      # No override
         output_dir=output_dir,
-        num_samples=None,       # No override
         num_seed=None,          # No override
     )
     

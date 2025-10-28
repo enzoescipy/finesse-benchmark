@@ -241,7 +241,7 @@ class HuggingFaceSynthesizer(FinesseSynthesizer):
         return self.device
 
 
-class MeanPoolingSynthesizer(FinesseSynthesizer):
+class NullSynthesizer(FinesseSynthesizer):
     """
     단순 평균 풀링을 사용하는 합성 엔진 구현체 (native_mode용).
     """
