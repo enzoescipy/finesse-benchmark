@@ -1,6 +1,8 @@
 import os
 import json
 import yaml
+import re
+from ruamel.yaml import YAML
 from typing import Optional
 import typer
 import torch
@@ -103,7 +105,10 @@ def generate_raw_data(
     if config.mode == 'merger_mode':
         typer.echo("  Mode: merger_mode")
         # Use base embedder for embedding and sequence merger for synthesis
-        embedder = HuggingFaceEmbedder(config.models.base_embedder.name)
+        embedder = HuggingFaceEmbedder(
+            config.models.base_embedder.name, 
+            max_length=config.models.base_embedder.max_context_length
+        )
         synthesizer = HuggingFaceSynthesizer(config.models.merger.name)
         typer.echo(f"  Embedder: {config.models.base_embedder.name}")
         typer.echo(f"  Synthesizer: {config.models.merger.name}")
@@ -111,7 +116,10 @@ def generate_raw_data(
     elif config.mode == 'native_mode':
         typer.echo("  Mode: native_mode")
         # Use native embedder for both embedding and synthesis (pass-through)
-        embedder = HuggingFaceEmbedder(config.models.native_embedder.name)
+        embedder = HuggingFaceEmbedder(
+            config.models.native_embedder.name,
+            max_length=config.models.native_embedder.max_context_length
+        )
         synthesizer = MeanPoolingSynthesizer()
         typer.echo(f"  Embedder: {config.models.native_embedder.name}")
         typer.echo("  Synthesizer: pass-through")
@@ -569,17 +577,24 @@ def init_config(
     - Use in 'generate': Pass as --config to start evaluation.
     """
     try:
+        yaml_ruamel = YAML()
+        yaml_ruamel.preserve_quotes = True
+        yaml_ruamel.boolean_representation = ['True', 'False']  # To preserve 'null' as null
+
         if leaderboard:
             resource_file = 'benchmark.leaderboard.yaml'
             typer.echo(f"Loading leaderboard config from package: {resource_file}")
             with resources.open_text('finesse_benchmark', resource_file) as f:
                 content = f.read()
-            yaml_data = yaml.safe_load(content)
             
             # Check for overrides - disable for leaderboard
             if mode or merger or base_embedder or native_embedder or base_max_len or native_max_len or byok_max_len:
                 typer.echo("❌ Error: Override arguments (--mode, --merger, --base-max-len, etc.) are not allowed with --leaderboard to preserve immutability.")
                 raise typer.Exit(code=1)
+            
+            data = yaml_ruamel.load(content)
+            with open(output_path, 'w', encoding='utf-8') as f:
+                yaml_ruamel.dump(data, f)
             
             typer.echo(f"Leaderboard benchmark.yaml generated at: {output_path}")
         else:
@@ -587,64 +602,87 @@ def init_config(
             typer.echo(f"Loading default config from package: {resource_file}")
             with resources.open_text('finesse_benchmark', resource_file) as f:
                 content = f.read()
-            yaml_data = yaml.safe_load(content)
+
+            # Handle BYOK uncommenting if needed
+            byok_uncommented_content = content
+            if byok_max_len is not None:
+                # Remove '#' from BYOK section lines to uncomment
+                byok_uncommented_content = re.sub(r'^#\s*byok_embedder:', r'  byok_embedder:', byok_uncommented_content, flags=re.MULTILINE)
+                byok_uncommented_content = re.sub(r'^#\s*provider: ', r'  provider: ', byok_uncommented_content, flags=re.MULTILINE | re.IGNORECASE)
+                byok_uncommented_content = re.sub(r'^#\s*name: ', r'  name: ', byok_uncommented_content, flags=re.MULTILINE | re.IGNORECASE)
+                byok_uncommented_content = re.sub(r'^#\s*tokenizer_path: ', r'  tokenizer_path: ', byok_uncommented_content, flags=re.MULTILINE | re.IGNORECASE)
+                byok_uncommented_content = re.sub(r'^#\s*max_context_length: ', r'  max_context_length: ', byok_uncommented_content, flags=re.MULTILINE | re.IGNORECASE)
+                byok_uncommented_content = re.sub(r'^#\s*\[BYOK Mode Example - Uncomment and edit for BYOK usage\]', r'  # [BYOK Mode Example - Uncommented for BYOK usage]', byok_uncommented_content, flags=re.MULTILINE)
+                # ... handle other BYOK comments like IMPORTANT sections if needed, but this covers the core
+
+            data = yaml_ruamel.load(byok_uncommented_content)
             
             # Apply overrides if provided
             if mode:
                 if mode not in ['merger_mode', 'native_mode', 'byok_mode']:
                     typer.echo(f"❌ Error: Invalid mode '{mode}'. Must be one of: merger_mode, native_mode, byok_mode.")
                     raise typer.Exit(code=1)
-                yaml_data['mode'] = mode
+                data['mode'] = mode
                 typer.echo(f"Set mode to: {mode}")
             
             if merger:
-                if 'models' not in yaml_data or 'merger' not in yaml_data['models']:
+                if 'models' not in data or 'merger' not in data['models']:
                     typer.echo("❌ Error: Invalid template structure for --merger.")
                     raise typer.Exit(code=1)
-                yaml_data['models']['merger']['name'] = merger
+                data['models']['merger']['name'] = merger
                 typer.echo(f"Set merger model to: {merger}")
             
             if base_embedder:
-                if 'models' not in yaml_data or 'base_embedder' not in yaml_data['models']:
+                if 'models' not in data or 'base_embedder' not in data['models']:
                     typer.echo("❌ Error: Invalid template structure for --base-embedder.")
                     raise typer.Exit(code=1)
-                yaml_data['models']['base_embedder']['name'] = base_embedder
+                data['models']['base_embedder']['name'] = base_embedder
                 typer.echo(f"Set base_embedder model to: {base_embedder}")
             
             if native_embedder:
-                if 'models' not in yaml_data or 'native_embedder' not in yaml_data['models']:
+                if 'models' not in data or 'native_embedder' not in data['models']:
                     typer.echo("❌ Error: Invalid template structure for --native-embedder.")
                     raise typer.Exit(code=1)
-                yaml_data['models']['native_embedder']['name'] = native_embedder
+                data['models']['native_embedder']['name'] = native_embedder
                 typer.echo(f"Set native_embedder model to: {native_embedder}")
 
             if base_max_len is not None:
-                if 'models' not in yaml_data or 'base_embedder' not in yaml_data['models']:
+                if 'models' not in data or 'base_embedder' not in data['models']:
                     typer.echo("❌ Error: Invalid template structure for --base-max-len.")
                     raise typer.Exit(code=1)
-                yaml_data['models']['base_embedder']['max_context_length'] = base_max_len
+                data['models']['base_embedder']['max_context_length'] = base_max_len
                 typer.echo(f"Set base_embedder max_context_length to: {base_max_len}")
 
             if native_max_len is not None:
-                if 'models' not in yaml_data or 'native_embedder' not in yaml_data['models']:
+                if 'models' not in data or 'native_embedder' not in data['models']:
                     typer.echo("❌ Error: Invalid template structure for --native-max-len.")
                     raise typer.Exit(code=1)
-                yaml_data['models']['native_embedder']['max_context_length'] = native_max_len
+                data['models']['native_embedder']['max_context_length'] = native_max_len
                 typer.echo(f"Set native_embedder max_context_length to: {native_max_len}")
 
             if byok_max_len is not None:
-                if 'models' not in yaml_data or 'byok_embedder' not in yaml_data['models']:
+                if 'models' not in data or 'byok_embedder' not in data['models']:
                     typer.echo("❌ Error: Invalid template structure for --byok-max-len. Uncomment byok_embedder section first.")
                     raise typer.Exit(code=1)
-                yaml_data['models']['byok_embedder']['max_context_length'] = byok_max_len
+                # Ensure the section exists after uncommenting
+                if 'byok_embedder' not in data['models']:
+                    data['models']['byok_embedder'] = {
+                        'provider': 'openai',
+                        'name': 'text-embedding-3-large',
+                        'tokenizer_path': None,
+                        'max_context_length': byok_max_len
+                    }
+                else:
+                    data['models']['byok_embedder']['max_context_length'] = byok_max_len
                 typer.echo(f"Set byok_embedder max_context_length to: {byok_max_len}")
+                typer.echo("BYOK section has been uncommented and configured.")
+            
+            # Write using ruamel to preserve as much as possible
+            with open(output_path, 'w', encoding='utf-8') as f:
+                yaml_ruamel.dump(data, f)
             
             typer.echo(f"Custom default benchmark.yaml generated at: {output_path}")
         
-        # Write the (potentially modified) YAML
-        with open(output_path, 'w', encoding='utf-8') as f:
-            yaml.dump(yaml_data, f, default_flow_style=False, allow_unicode=True)
-
         # Validate the generated config
         try:
             with open(output_path, "r", encoding='utf-8') as f:

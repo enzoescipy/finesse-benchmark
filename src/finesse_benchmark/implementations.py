@@ -13,18 +13,20 @@ class HuggingFaceEmbedder(FinesseEmbedder):
     Hugging Face 모델을 사용하는 임베딩 엔진 구현체.
     """
     
-    def __init__(self, model_path: str, prefix: Optional[str] = None, device: Optional[str] = None, dtype: Optional[torch.dtype] = None):
+    def __init__(self, model_path: str, prefix: Optional[str] = None, device: Optional[str] = None, dtype: Optional[torch.dtype] = None, max_length: int = 512):
         """
         Args:
             model_path: Hugging Face 모델 경로
             prefix: 임베딩 전 텍스트에 추가할 접두사 (예: "passage: " for E5)
             device: Optional device to use (e.g., 'cuda', 'cpu'). Defaults to auto-detect.
             dtype: Optional data type for the model (e.g., torch.float16). Defaults to auto-detect based on device.
+            max_length: Maximum token length for embedding (default: 512)
         """
         self.device = torch.device(device) if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = dtype or (torch.float16 if self.device.type == 'cuda' else torch.float32)
         self.model_path = model_path
         self.prefix = prefix or ""
+        self.max_length = max_length
         
         # Load model and tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
@@ -42,7 +44,7 @@ class HuggingFaceEmbedder(FinesseEmbedder):
         # Tokenize
         inputs = self.tokenizer(
             input_texts,
-            max_length=512,
+            max_length=self.max_length,
             padding=True,
             truncation=True,
             return_tensors="pt"

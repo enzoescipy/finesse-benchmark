@@ -97,6 +97,29 @@ class FinesseEvaluator:
         if len(dataset) < total_needed_samples:
             raise ValueError(f"데이터셋 크기({len(dataset)})가 필요 샘플({total_needed_samples})보다 작음. 더 많은 데이터 필요.")
 
+        # Warm-up phase: Initialize models with dummy data to avoid cold-start latency
+        dummy_samples = [
+            "This is a warm-up dummy sentence 1.",
+            "This is a warm-up dummy sentence 2."
+        ]
+        if self.config.mode == 'merger_mode':
+            # Warm-up embedder
+            _ = self.embedder.encode(dummy_samples)
+            # Warm-up synthesizer incrementally
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            dummy_embs = self.embedder.encode(dummy_samples)
+            cumulative = torch.empty((0, dummy_embs.shape[1]), dtype=dummy_embs.dtype, device=device)
+            for emb in dummy_embs:
+                single_on_device = emb.unsqueeze(0).to(device)
+                cumulative = torch.cat([cumulative, single_on_device], dim=0)
+                partial_embs = cumulative.unsqueeze(0)  # (1, i+1, D)
+                _ = self.synthesizer.synthesize(partial_embs).squeeze(0)
+            del cumulative  # Cleanup
+        else:
+            # For native_mode or byok_mode: Warm-up embedder only
+            _ = self.embedder.encode(dummy_samples)
+        # All warm-up results discarded; models now warmed up
+
         length_results = {}  # 길이별 결과 저장: {'sample_results': [dicts], 'num_synth_steps': N}
         for target_length in range(min_length, max_length + 1):
             # Pre-length check: Estimate if feasible
