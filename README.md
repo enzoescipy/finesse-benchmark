@@ -1,8 +1,8 @@
 # Finesse Benchmark: Evaluating Long-Context Embedders with Semantic Precision
 
-[Github](https://github.com/enzoescipy/finesse-benchmark)
-[pypi](https://pypi.org/project/finesse-benchmark/)
-[blog](https://www.winter-sci-dev.com/posts/embed-sequence-merger-vbert-ppe-article/)
+[![GitHub](https://img.shields.io/badge/GitHub-Repository-blue?logo=github)](https://github.com/enzoescipy/finesse-benchmark)
+[![PyPI](https://img.shields.io/badge/PyPI-Package-green?logo=pypi)](https://pypi.org/project/finesse-benchmark/)
+[![Blog](https://img.shields.io/badge/Blog-Article-orange?logo=medium)](https://www.winter-sci-dev.com/posts/embed-sequence-merger-vbert-ppe-article/)
 
 ## Introduction
 
