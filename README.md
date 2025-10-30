@@ -3,6 +3,7 @@
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-blue?logo=github)](https://github.com/enzoescipy/finesse-benchmark)
 [![PyPI](https://img.shields.io/badge/PyPI-Package-green?logo=pypi)](https://pypi.org/project/finesse-benchmark/)
 [![Blog](https://img.shields.io/badge/Blog-Article-orange?logo=medium)](https://www.winter-sci-dev.com/posts/embed-sequence-merger-vbert-ppe-article/)
+[![huggingface](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Model-blue)](https://huggingface.co/spaces/enzoescipy/finesse-benchmark-space)
 
 ## Introduction
 
@@ -12,9 +13,12 @@ The **Finesse Benchmark** is a sophisticated evaluation framework designed to as
 - **Modular Evaluation Modes**: Supports `merger_mode` (using sequence-merger with a base embedder), `native_mode` (direct long-context embedders like Snowflake Arctic Embed), and `BYOK_mode` (Bring Your Own Keys for external APIs via LiteLLM).
 - **Dynamic Probe Generation**: Creates synthetic probes from atomic text chunks in the dataset, masking portions to test reconstruction accuracy.
 - **Top-Down and Bottom-Up Scoring**: Combines **Top-Down (TD)** for contextual coherence (how well the model separates memory from noise) and **Bottom-Up (BU)** for individual chunk integrity (how well each chunk recognizes itself in compositions).
+- **Latency Measurement**: Tracks computational efficiency by measuring `total_latency` (full embedding process time in milliseconds) and `synthesis_latency` (merging-specific time in milliseconds), enabling analysis of accuracy versus speed trade-offs.
 - **Reproducibility and Integrity**: Outputs include self-contained content hashes and optional model hashes for notarization and verification.
 - **CLI-Driven Workflow**: Simple commands (`init`, `generate`, `score`, `checksum`) for end-to-end evaluation.
 - **Dataset**: Uses the [enzoescipy/finesse-benchmark-database](https://huggingface.co/datasets/enzoescipy/finesse-benchmark-database) on Hugging Face, which provides domain-diverse atomic chunks grouped by `string_id`.
+
+- **Results Repository**: All official and community-submitted benchmark results, including JSON reports and .pt files, are hosted and versioned in the [enzoescipy/finesse-benchmark-results](https://huggingface.co/datasets/enzoescipy/finesse-benchmark-results) dataset on Hugging Face. This serves as the central hub for leaderboard updates and comparative analysis. results are shared on the [enzoescipy/finesse-benchmark-space](https://huggingface.co/spaces/enzoescipy/finesse-benchmark-space).
 
 Finesse is built with [Pydantic](https://pydantic-docs.helpmanual.io/) for configuration validation, [Typer](https://typer.tiangolo.com/) for CLI, and [Torch](https://pytorch.org/) for efficient embedding computations.
 
@@ -157,8 +161,26 @@ Computes TD/BU scores and final RSS from raw `.pt` data.
   ```json
   {
     "config": {...},
-    "average_rss": 42.123456,
-    "length_scores": {"5": 40.5, "16": 43.7},
+    "average_rss": 68.984345,
+    "average_total_latency": 52.576509,
+    "average_synthesis_latency": 52.576509,
+    "length_scores": {
+            "4": {
+                "rss_scores": [
+                    123.456,
+                    234.567,
+                ],
+                "total_latency_scores": [
+                    12.34,
+                    56.78,
+                ],
+                "synthesis_latency_scores": [
+                    1.23,
+                    4.56,
+                ]
+            }
+            "5" : ...
+    }
     "content_hash": "sha256:...",
     "model_hash": "sha256:..."  // Optional, for HF models
   }
@@ -193,12 +215,14 @@ finesse checksum --json-path results/benchmark_results.json --model-path enzoesc
   - Used as input to `score`; enables decoupling of embedding generation (GPU-heavy) from scoring (CPU-friendly).
 
 - **`benchmark_results.json`**: Human-readable results with:
-  - `average_rss`: Overall score (higher is better; >40 indicates strong performance).
   - `length_scores`: Per-sequence-length scores (tests scaling).
+  - `rss_scores`: Overall score (higher is better; -1000 ~ 1000 range).
+  - `total_latency_scores`: Total time (in milliseconds) for the entire embedding generation process across all samples.
+  - `synthesis_latency_scores`: Time (in milliseconds) specifically for the synthesis/merging steps across all samples.
   - `content_hash`: SHA-256 of config + scores (for tamper-proofing).
   - `model_hash`: SHA-256 of model files (if applicable; verifies unchanged model).
 
-Hashes ensure reproducibility: Rerun `checksum` on shared results to confirm no alterations.
+Hashes ensure reproducibility: Rerun `checksum` on shared results to confirm no alterations. Users can upload their `benchmark_results.json` to the [enzoescipy/finesse-benchmark-space](https://huggingface.co/spaces/enzoescipy/finesse-benchmark-space) for community visibility and leaderboard integration.
 
 ## Using BYOK Mode (Bring Your Own Keys)
 
@@ -291,7 +315,6 @@ To ensure fair, reproducible, and standardized evaluations for the official Fine
    Submit `benchmark_results.json` to the leaderboard (via HF Spaces, GitHub, etc.). Include `content_hash` and `model_hash` for verification.
 
 This setup guarantees all submissions use identical dataset sampling, probe generation, and randomness, focusing purely on model performance.
-
 
 ## Using Custom Local Synthesizers with Finesse Benchmark
 
