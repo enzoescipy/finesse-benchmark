@@ -18,7 +18,7 @@ The **Finesse Benchmark** is a sophisticated evaluation framework designed to as
 - **CLI-Driven Workflow**: Simple commands (`init`, `generate`, `score`, `checksum`) for end-to-end evaluation.
 - **Dataset**: Uses the [enzoescipy/finesse-benchmark-database](https://huggingface.co/datasets/enzoescipy/finesse-benchmark-database) on Hugging Face, which provides domain-diverse atomic chunks grouped by `string_id`.
 
-- **Results Repository**: All official and community-submitted benchmark results, including JSON reports and .pt files, are hosted and versioned in the [enzoescipy/finesse-benchmark-results](https://huggingface.co/datasets/enzoescipy/finesse-benchmark-results) dataset on Hugging Face. This serves as the central hub for leaderboard updates and comparative analysis. results are shared on the [enzoescipy/finesse-benchmark-space](https://huggingface.co/spaces/enzoescipy/finesse-benchmark-space).
+- **Results Repository**: All official and community-submitted benchmark results are archived in the [enzoescipy/finesse-benchmark-results](https://huggingface.co/datasets/enzoescipy/finesse-benchmark-results) dataset. For interactive leaderboards and submission guidelines, see the [enzoescipy/finesse-benchmark-space](https://huggingface.co/spaces/enzoescipy/finesse-benchmark-space).
 
 Finesse is built with [Pydantic](https://pydantic-docs.helpmanual.io/) for configuration validation, [Typer](https://typer.tiangolo.com/) for CLI, and [Torch](https://pytorch.org/) for efficient embedding computations.
 
