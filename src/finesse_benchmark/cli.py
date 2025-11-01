@@ -135,6 +135,7 @@ def generate_raw_data(
         else:
             embedder = HuggingFaceEmbedder(
                 embedder_config.name, 
+                prefix=embedder_config.prefix,
                 max_length=embedder_config.max_context_length
             )
             typer.echo(f"  Embedder: {embedder_config.name}")
@@ -149,6 +150,7 @@ def generate_raw_data(
         else:
             embedder = HuggingFaceEmbedder(
                 embedder_config.name,
+                prefix=embedder_config.prefix,
                 max_length=embedder_config.max_context_length
             )
             typer.echo(f"  Embedder: {embedder_config.name}")

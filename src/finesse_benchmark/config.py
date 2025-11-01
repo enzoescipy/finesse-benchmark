@@ -16,6 +16,7 @@ class SequenceLengthConfig(BaseModel):
 class AutoModelSelector(BaseModel):
     """hf 모델 설정"""
     name: str = Field(..., description="모델 카드 이름")
+    prefix: Optional[str] = Field(default=None, description="임베딩 전 텍스트에 추가할 접두사 (e.g., 'passage: ' for E5 models)")
 
     max_context_length: Optional[int] = Field(default=None, description="모델의 최대 컨텍스트 길이 (토크나이저 수). 자격 심사를 위해 사용됩니다.")
 

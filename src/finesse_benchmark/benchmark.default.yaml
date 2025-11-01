@@ -3,7 +3,7 @@
 # For merger_mode: Use sequence-merger with a base embedder.
 # For native_mode: Use a long-context native embedder directly.
 
-mode: "merger_mode"  # Options: "merger_mode", "native_mode", or "byok_mode"
+mode: "merger_mode" # Options: "merger_mode", "native_mode", or "byok_mode"
 
 # Models Configuration
 models:
@@ -15,8 +15,8 @@ models:
   base_embedder:
     # e.g., multilingual-e5-base for merger, or longformer-base-4096 for native
     name: "intfloat/multilingual-e5-base"
-    max_context_length: 512  # Automatic check in merger_mode: ensures token_per_sample <= this limit
-
+    max_context_length: 512 # Automatic check in merger_mode: ensures token_per_sample <= this limit
+    prefix: "passage: "
   # IMPORTANT: max_context_length Field Explanation (for all embedder types: base, native, byok)
   #
   # This optional field specifies the model's official maximum context length in tokens.
@@ -41,7 +41,7 @@ models:
     # e.g., "Snowflake/snowflake-arctic-embed-l-v2.0"
     name: "Snowflake/snowflake-arctic-embed-l-v2.0"
     max_context_length: 8192  # Automatic skip for sequences exceeding this (e.g., >32 chunks at 256 tokens each)
-
+    prefix: "" # no prefix for passage model
   # [Local Python Class Example - Uncomment and edit for custom model classes]
   # Load a model class directly from a local Python file instead of Hugging Face Hub.
   # This is useful for custom implementations, research prototypes, or models not published to HF.
@@ -102,7 +102,7 @@ probe_config:
     min: 5  # Minimum sequence length in tokens
     max: 16  # Maximum sequence length in tokens
   samples_per_length: 5  # Evaluations per length
-  token_per_sample : 256  # Number of tokens per chunk
+  token_per_sample : 250 # Number of tokens per chunk
 
 # Advanced Settings
 advanced: {}

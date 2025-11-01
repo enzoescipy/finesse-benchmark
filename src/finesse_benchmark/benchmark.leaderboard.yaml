@@ -19,10 +19,8 @@ models:
   # Base Embedder (used in merger_mode and as probe embedder)
   base_embedder:
     name: "intfloat/multilingual-e5-base"  # Standard multilingual base for global coverage
-  # Native Embedder (for native_mode comparisons)
-
-    max_context_length: 512  # Automatic check in merger_mode: ensures token_per_sample <= this limit
-
+    max_context_length: 512 
+    prefix: "passage: "
   # IMPORTANT: max_context_length Field Explanation (for all embedder types: base, native, byok)
   #
   # This optional field specifies the model's official maximum context length in tokens.
@@ -47,6 +45,7 @@ models:
     # e.g., "Snowflake/snowflake-arctic-embed-l-v2.0"
     name: "Snowflake/snowflake-arctic-embed-l-v2.0"
     max_context_length: 8192  # Automatic skip for sequences exceeding this (e.g., >32 chunks at 256 tokens each)
+    prefix: "" # no prefix for passage model
 
   # [Local Python Class Example - Uncomment and edit for custom model classes]
   # Load a model class directly from a local Python file instead of Hugging Face Hub.
@@ -109,7 +108,7 @@ probe_config:
     min: 4   # Minimum length: Tests basic composition
     max: 64  # Maximum length: Tests scaling up to moderate long-context
   samples_per_length: 25  # Samples per length: Ensures reliable averages (25 evals per point)
-  token_per_sample : 510  # Number of tokens per chunk, 512 - 2 (for the maximum capacity but having safer margin)
+  token_per_sample : 500  # Number of tokens per chunk, 512 - 2 (for the maximum capacity but having safer margin)
 
 # Advanced Settings (Defaults for Fair Comparison)
 advanced:
