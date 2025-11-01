@@ -48,6 +48,23 @@ models:
     name: "Snowflake/snowflake-arctic-embed-l-v2.0"
     max_context_length: 8192  # Automatic skip for sequences exceeding this (e.g., >32 chunks at 256 tokens each)
 
+  # [Local Python Class Example - Uncomment and edit for custom model classes]
+  # Load a model class directly from a local Python file instead of Hugging Face Hub.
+  # This is useful for custom implementations, research prototypes, or models not published to HF.
+  #
+  # Example: Using a custom AverageModel class from a local file
+  # merger:
+  #   local_path: "final_result/average-build/modeling_average.py"  # Path to the .py file containing the class
+  #   local_class: "AverageModel"  # Name of the class to instantiate
+  #   max_context_length: 512  # CRITICAL: Set the model's official maximum context length
+  #
+  # Requirements for the local class:
+  # - Must inherit from FinesseSynthesizer (for merger) or FinesseEmbedder (for embedder)
+  # - Must have an __init__ method that accepts a config object (AutoConfig or similar)
+  # - The .py file must be importable and contain the specified class
+  #
+  # Note: When using local_path/local_class, the 'name' field is ignored.
+
   # [BYOK Mode Example - Uncomment and edit for BYOK usage]
   # For byok_mode: Specify the API provider and model name for litellm
   # byok_embedder:

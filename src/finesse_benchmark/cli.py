@@ -9,9 +9,11 @@ import torch
 import numpy as np
 import traceback
 from importlib import resources
+from pathlib import Path
+import importlib.util
 from .utils import get_content_hash, get_model_hash
 from typing import Dict, List
-from .config import BenchmarkConfig
+from .config import BenchmarkConfig, LocalModelSelector
 from .evaluator import FinesseEvaluator
 from .scoring import calculate_self_attestation_scores, calculate_self_attestation_scores_bottom_up, calculate_sample_latency
 
@@ -92,8 +94,22 @@ def generate_raw_data(
     # Create output dir
     os.makedirs(output_dir, exist_ok=True)
 
-    # Init Evaluator with proper engine injection based on mode
-    typer.echo("Initializing FinesseEvaluator...")
+    # Helper function to load local model engines
+    def load_local_engine(model_config: LocalModelSelector):
+        file_path = Path(model_config.local_path)
+        class_name = model_config.local_class
+        
+        if not file_path.exists():
+            raise FileNotFoundError(f"Local model file not found: {file_path}")
+        
+        spec = importlib.util.spec_from_file_location(file_path.stem, file_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        
+        ModelClass = getattr(module, class_name)
+        
+        config_path = str(file_path.parent)
+        return ModelClass(config_path=config_path)
     
     # Import the engine implementations
     from .implementations import HuggingFaceEmbedder, ByokEmbedder, HuggingFaceSynthesizer, NullSynthesizer
@@ -101,24 +117,43 @@ def generate_raw_data(
     # Initialize embedder and synthesizer based on mode
     if config.mode == 'merger_mode':
         typer.echo("  Mode: merger_mode")
-        # Use base embedder for embedding and sequence merger for synthesis
-        embedder = HuggingFaceEmbedder(
-            config.models.base_embedder.name, 
-            max_length=config.models.base_embedder.max_context_length
-        )
-        synthesizer = HuggingFaceSynthesizer(config.models.merger.name)
-        typer.echo(f"  Embedder: {config.models.base_embedder.name}")
-        typer.echo(f"  Synthesizer: {config.models.merger.name}")
+        merger_config = config.models.merger
+        embedder_config = config.models.base_embedder
+        
+        # Load synthesizer (merger)
+        if isinstance(merger_config, LocalModelSelector):
+            synthesizer = load_local_engine(merger_config)
+            typer.echo(f"  Synthesizer: Local - {merger_config.local_path}::{merger_config.local_class}")
+        else:
+            synthesizer = HuggingFaceSynthesizer(merger_config.name)
+            typer.echo(f"  Synthesizer: {merger_config.name}")
+        
+        # Load embedder (base)
+        if isinstance(embedder_config, LocalModelSelector):
+            embedder = load_local_engine(embedder_config)
+            typer.echo(f"  Embedder: Local - {embedder_config.local_path}::{embedder_config.local_class}")
+        else:
+            embedder = HuggingFaceEmbedder(
+                embedder_config.name, 
+                max_length=embedder_config.max_context_length
+            )
+            typer.echo(f"  Embedder: {embedder_config.name}")
     
     elif config.mode == 'native_mode':
         typer.echo("  Mode: native_mode")
-        # Use native embedder for both embedding and synthesis (pass-through)
-        embedder = HuggingFaceEmbedder(
-            config.models.native_embedder.name,
-            max_length=config.models.native_embedder.max_context_length
-        )
+        embedder_config = config.models.native_embedder
+        
+        if isinstance(embedder_config, LocalModelSelector):
+            embedder = load_local_engine(embedder_config)
+            typer.echo(f"  Embedder: Local - {embedder_config.local_path}::{embedder_config.local_class}")
+        else:
+            embedder = HuggingFaceEmbedder(
+                embedder_config.name,
+                max_length=embedder_config.max_context_length
+            )
+            typer.echo(f"  Embedder: {embedder_config.name}")
+        
         synthesizer = NullSynthesizer()
-        typer.echo(f"  Embedder: {config.models.native_embedder.name}")
         typer.echo("  Synthesizer: pass-through")
     
     elif config.mode == 'byok_mode':
@@ -526,6 +561,7 @@ def init_config(
     base_max_len: Optional[int] = typer.Option(None, "--base-max-len", help="Set the max context length for base_embedder (tokens)"),
     native_max_len: Optional[int] = typer.Option(None, "--native-max-len", help="Set the max context length for native_embedder (tokens)"),
     byok_max_len: Optional[int] = typer.Option(None, "--byok-max-len", help="Set the max context length for byok_embedder (tokens)"),
+    scaffold: Optional[str] = typer.Option(None, "--scaffold", help="Path to generate a Python scaffold file for custom models (e.g., my_model.py)"),
     output_path: str = typer.Option("benchmark.yaml", "--output", help="Path to save the config file")):
     """
     Generate a default or leaderboard benchmark.yaml configuration template.
@@ -546,6 +582,9 @@ def init_config(
     --base-max-len: Optional integer for base_embedder max_context_length (tokens, e.g., 512 for e5-base).
     --native-max-len: Optional integer for native_embedder max_context_length (tokens, e.g., 8192 for arctic-embed).
     --byok-max-len: Optional integer for byok_embedder max_context_length (tokens, e.g., 8192 for text-embedding-3-large).
+    --scaffold: Path to generate a Python scaffold file for custom local models (e.g., 'my_custom_model.py').
+                This creates a template inheriting from FinesseEmbedder with TODOs for implementation.
+                When using --scaffold, other options like --mode or --output are ignored; focus is on template creation.
     --output: Path to save the generated YAML. Defaults to 'benchmark.yaml' in current directory.
 
     Template Contents (Default Mode):
@@ -571,12 +610,47 @@ def init_config(
        # Copy official leaderboard config; validates Pydantic schema on creation.
     $ finesse init --mode merger_mode --merger enzoescipy/sequence-merger-malgeum --base-embedder intfloat/multilingual-e5-base
        # Generate customized merger_mode config.
+    $ finesse init --scaffold my_custom_embedder.py
+       # Generate a Python template for custom embedder model.
 
     Post-Generation Steps:
     - Edit the YAML (e.g., change models, lengths).
     - Validate: Run 'finesse init --leaderboard' again or manually with Pydantic to check syntax.
     - Use in 'generate': Pass as --config to start evaluation.
     """
+    if scaffold:
+        # Generate scaffold Python file for custom models
+        with resources.open_text('finesse_benchmark', 'benchmark.scaffold.py') as f:
+            scaffold_template = f.read()
+        
+        # Format the template with the filename
+        formatted_template = scaffold_template.format(filename=os.path.basename(scaffold) if not os.path.dirname(scaffold) else scaffold)
+        
+        # Create directory if needed
+        output_dir = os.path.dirname(scaffold) if os.path.dirname(scaffold) else '.'
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Write the scaffold file
+        with open(scaffold, 'w', encoding='utf-8') as f:
+            f.write(formatted_template)
+        
+        typer.echo(f"Custom model scaffold generated at: {{scaffold}}")
+        typer.echo("Next steps:")
+        typer.echo("1. Edit the 'MyCustomEmbedder' class to implement your model logic.")
+        typer.echo("2. In benchmark.yaml, use: local_path: '{{scaffold}}', local_class: 'MyCustomEmbedder'")
+        typer.echo("3. Set max_context_length appropriately for your model.")
+        typer.echo("4. Run 'finesse generate --config benchmark.yaml' to test.")
+        
+        # Validate basic structure (optional)
+        try:
+            import ast
+            ast.parse(formatted_template)
+            typer.echo("Scaffold Python syntax validated.")
+        except SyntaxError as e:
+            typer.echo(f"Warning: Scaffold has syntax error - {{e}}")
+        
+        return  # Exit early, no YAML generation
+    
     try:
         yaml_ruamel = YAML()
         yaml_ruamel.preserve_quotes = True

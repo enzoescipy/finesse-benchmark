@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, model_validator
-from typing import Dict, Any, Optional, Literal
+from typing import Dict, Any, Optional, Literal, Union
 
 class SequenceLengthConfig(BaseModel):
     """시퀀스 길이 범위 설정"""
@@ -27,6 +27,12 @@ class ByokEmbedderConfig(BaseModel):
 
     max_context_length: Optional[int] = Field(default=None, description="모델의 최대 컨텍스트 길이 (토크나이저 수). 자격 심사를 위해 사용됩니다.")
 
+class LocalModelSelector(BaseModel):
+    """로컬 파이썬 파일에서 직접 모델 클래스를 로드하기 위한 설정"""
+    local_path: str = Field(..., description="모델 클래스가 정의된 .py 파일의 경로")
+    local_class: str = Field(..., description="로드할 클래스의 이름")
+    max_context_length: Optional[int] = Field(default=None, description="모델의 최대 컨텍스트 길이 (토크나이저 수). 자격 심사를 위해 사용됩니다.")
+
 class ProbeConfig(BaseModel):
     """프로브 생성 설정"""
     sequence_length: SequenceLengthConfig = Field(default=SequenceLengthConfig(min=4, max=16), description="시퀀스 길이 범위. min부터 max까지 순차적으로 평가.")
@@ -34,9 +40,9 @@ class ProbeConfig(BaseModel):
     token_per_sample: int = Field(default=256, description="해당 시퀸스 길이의 각 청크 자체의 크기. 토크나이저는 임베딩 엔진을 기준으로 합니다.")
 
 class ModelsConfig(BaseModel):
-    merger: Optional[AutoModelSelector] = Field(default=None, description="merger_mode용 모델 설정")
-    base_embedder: Optional[AutoModelSelector] = Field(default=None, description="기본 임베더 설정")
-    native_embedder: Optional[AutoModelSelector] = Field(default=None, description="native_mode용 임베더 설정")
+    merger: Optional[Union[AutoModelSelector, LocalModelSelector]] = Field(default=None, description="merger_mode용 모델 설정 (Hugging Face 또는 로컬 클래스)")
+    base_embedder: Optional[Union[AutoModelSelector, LocalModelSelector]] = Field(default=None, description="기본 임베더 설정 (Hugging Face 또는 로컬 클래스)")
+    native_embedder: Optional[Union[AutoModelSelector, LocalModelSelector]] = Field(default=None, description="native_mode용 임베더 설정 (Hugging Face 또는 로컬 클래스)")
     byok_embedder: Optional[ByokEmbedderConfig] = Field(default=None, description="BYOK mode용 임베더 설정")
 
 class DatasetConfig(BaseModel):
