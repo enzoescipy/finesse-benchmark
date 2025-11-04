@@ -275,6 +275,8 @@ def score_embeddings(
     
     scoring_method = metadata.get('scoring_method', 'rss')
     mode = config_dict.get('mode')
+
+    avg_score = None
     
     if scoring_method == 'srs':
         # Calculate SRS scores using helper
@@ -285,7 +287,7 @@ def score_embeddings(
         # Averages (no latencies for SRS)
         avg_srs = np.mean(all_individual_scores) if all_individual_scores else 0.0
         avg_srs = round(avg_srs, 6)
-        
+        avg_score = avg_srs
         # Prepare base results without hash
         base_results = {
             'config': config_dict,
@@ -306,6 +308,7 @@ def score_embeddings(
         # Averages
         avg_rss = np.mean(all_individual_scores) if all_individual_scores else 0.0
         avg_rss = round(avg_rss, 6)
+        avg_score = avg_rss
         avg_total_latency = np.mean(all_total_latencies) if all_total_latencies else 0.0
         avg_total_latency = round(avg_total_latency, 6)
         avg_synthesis_latency = np.mean(all_synthesis_latencies) if all_synthesis_latencies else 0.0
@@ -352,28 +355,31 @@ def score_embeddings(
         typer.echo(f"Warning: Could not compute model hash: {e}")
         base_results['model_hash'] = None
     
-# Create output dir before hashing to ensure debug path exists
+    # Create output dir before hashing to ensure debug path exists
     os.makedirs(output_dir, exist_ok=True)
     
-# Create copy for hashing with fixed frame ('content_hash': '')
+    # Create copy for hashing with fixed frame ('content_hash': '')
     hash_data = base_results.copy()
     hash_data['content_hash'] = ''
     
-# Compute content hash on the fixed frame with debug
+    # Compute content hash on the fixed frame with debug
     content_hash = get_content_hash(hash_data)
-# content_hash = get_content_hash(hash_data, debug_file_path='results/stored_canonical.txt')
+    # content_hash = get_content_hash(hash_data, debug_file_path='results/stored_canonical.txt')
     
-# Add the hash to final results
+    # Add the hash to final results
     results = base_results.copy()
     results['content_hash'] = content_hash
     
-# Save to JSON
+    # Save to JSON
     output_path = os.path.join(output_dir, "benchmark_results.json")
     with open(output_path, "w", encoding='utf-8', newline='') as f:
         json.dump(results, f, indent=2)
     
     typer.echo(f"Scored results saved to {output_path}")
-    typer.echo(f"Average RSS: {avg_rss}")
+    if scoring_method == 'rss':
+        typer.echo(f"Average RSS: {avg_score}")
+    elif scoring_method == 'srs':
+        typer.echo(f"Average SRS: {avg_score}")
 
 @app.command("checksum")
 def verify_integrity(

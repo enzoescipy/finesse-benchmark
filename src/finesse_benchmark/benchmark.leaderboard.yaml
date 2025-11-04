@@ -109,6 +109,7 @@ probe_config:
     max: 64  # Maximum length: Tests scaling up to moderate long-context
   samples_per_length: 25  # Samples per length: Ensures reliable averages (25 evals per point)
   token_per_sample : 500  # Number of tokens per chunk, 512 - 2 (for the maximum capacity but having safer margin)
+  group_amount: 100  # Only for the SRS evaluation. Decides how much to collect ordered-series and reversed-series to compare.
 
 # Advanced Settings (Defaults for Fair Comparison)
 advanced:

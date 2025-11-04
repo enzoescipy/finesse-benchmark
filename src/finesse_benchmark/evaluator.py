@@ -355,6 +355,7 @@ class FinesseEvaluator:
 
             # target_length 개의 청크로 구성된 시퀀스를 samples_per_length번 테스트
             while len(sample_results) < self.config.probe_config.samples_per_length:
+                typer.echo(f"probe sequence [{target_length}] in progress ({len(sample_results)}/{self.config.probe_config.samples_per_length})...")
                 
                 # testing probe chunks yield
                 test_probe_chunks = self._get_text_chunck_from_database(target_length=target_length - 1, dataset=dataset, iterator=iterator)
@@ -507,6 +508,9 @@ class FinesseEvaluator:
         # find min, max length
         min_length, max_length = self.config.probe_config.sequence_length.min, self.config.probe_config.sequence_length.max
 
+        # Find ctx
+        max_ctx = self.config.models.native_embedder.max_context_length
+
         # Warm-up phase: Initialize embedder with dummy data to avoid cold-start latency (no synthesizer in native mode)
         dummy_samples = [
             "This is a warm-up dummy sentence 1.",
@@ -517,12 +521,29 @@ class FinesseEvaluator:
         length_results = {}  # 길이별 결과 저장: {'sample_results': [dicts], 'num_synth_steps': N}
 
         for target_length in range(min_length, max_length + 1):
+            # Pre-length check: Estimate if feasible
+            estimated_tokens = target_length * self.config.probe_config.token_per_sample + 100  # +overhead for joins/spaces
+            skip_length = False
+            if estimated_tokens > max_ctx:
+                typer.echo(f"Skipping entire length {target_length}: estimated {estimated_tokens} tokens > {max_ctx} limit.")
+                length_results[target_length] = {
+                    'sample_results': [],
+                    'num_synth_steps': target_length,
+                    'skipped': True  # Flag for post-processing
+                }
+                skip_length = True
+                continue
+
+            if skip_length:
+                continue
+
             typer.echo(f"probe sequence [{target_length}] in progress ...")
             
             sample_results = []  # List of 25 dicts per length
 
             # target_length 개의 청크로 구성된 시퀀스를 samples_per_length번 테스트
             while len(sample_results) < self.config.probe_config.samples_per_length:
+                typer.echo(f"probe sequence [{target_length}] in progress ({len(sample_results)}/{self.config.probe_config.samples_per_length})...")
                 
                 # testing probe chunks yield
                 test_probe_chunks = self._get_text_chunck_from_database(target_length=target_length - 1, dataset=dataset, iterator=iterator)
@@ -533,8 +554,6 @@ class FinesseEvaluator:
                     current_probe.append(test_probe_chunks[i])
                     arbitual_probe_group.append(tuple(current_probe))
 
-                # Batch embed all probe chunks for efficiency
-                chunk_embeddings_tensor = self.embedder.encode(test_probe_chunks)
 
                 # Synthesize cumulative embeddings progressively using text joining (native mode: no separate synthesizer)
                 synthesis_probe_embeddings = []
@@ -647,16 +666,6 @@ class FinesseEvaluator:
             }
 
         return self._package_metadata_data(length_results=length_results, scoring_name='srs')
-
-
-
-
-
-
-
-
-
-
 
 
 
