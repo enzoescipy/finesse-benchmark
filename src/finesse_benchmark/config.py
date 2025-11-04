@@ -39,6 +39,7 @@ class ProbeConfig(BaseModel):
     sequence_length: SequenceLengthConfig = Field(default=SequenceLengthConfig(min=4, max=16), description="시퀀스 길이 범위. min부터 max까지 순차적으로 평가.")
     samples_per_length: int = Field(default=10, description="각 시퀀스 길이에 대해 평가할 샘플 개수.")
     token_per_sample: int = Field(default=256, description="해당 시퀸스 길이의 각 청크 자체의 크기. 토크나이저는 임베딩 엔진을 기준으로 합니다.")
+    group_amount: int = Field(default=50, description="SRS 점수 평가에만 사용됩니다. 역-순열 및 정-순열 세트를 몇개씩 수집하여 대조할 지 결정합니다.")
 
 class ModelsConfig(BaseModel):
     merger: Optional[Union[AutoModelSelector, LocalModelSelector]] = Field(default=None, description="merger_mode용 모델 설정 (Hugging Face 또는 로컬 클래스)")

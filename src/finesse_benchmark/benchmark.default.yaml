@@ -103,6 +103,7 @@ probe_config:
     max: 16  # Maximum sequence length in tokens
   samples_per_length: 5  # Evaluations per length
   token_per_sample : 250 # Number of tokens per chunk
+  group_amount: 50  # Only for the SRS evaluation. Decides how much to collect ordered-series and reversed-series to compare.
 
 # Advanced Settings
 advanced: {}
