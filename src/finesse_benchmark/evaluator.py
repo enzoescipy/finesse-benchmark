@@ -405,57 +405,92 @@ class FinesseEvaluator:
 
                 del cumulative_embeddings  # Final cleanup
 
-                # test group factory
-                max_n_gram_len = (target_length - 2)
-                n_gram_memory_chunks = self._get_text_chunck_from_database(target_length=max_n_gram_len * self.config.probe_config.group_amount, dataset=dataset, iterator=iterator)
+                # test group factory - Adjusted for symmetric context: fetch for group_amount only
+                group_amount = self.config.probe_config.group_amount
+                max_n_gram_len = target_length - 2
+                n_gram_memory_chunks = self._get_text_chunck_from_database(
+                    target_length=group_amount * max_n_gram_len, 
+                    dataset=dataset, 
+                    iterator=iterator
+                )
                 arbitual_n_gram_memory = []
-                for i in range(2 * self.config.probe_config.group_amount):
-                    n_gram = []
-                    for j in range(max_n_gram_len):
-                        n_gram.append(n_gram_memory_chunks[i * max_n_gram_len + j])
+                for i in range(group_amount):
+                    start_idx = i * max_n_gram_len
+                    n_gram = n_gram_memory_chunks[start_idx : start_idx + max_n_gram_len]
                     arbitual_n_gram_memory.append(n_gram)
+
+                # Pre-embed context chunks
+                n_gram_memory_flat = [chunk for sublist in arbitual_n_gram_memory for chunk in sublist]
+                context_embeddings_tensor = self.embedder.encode(n_gram_memory_flat)
+                context_embeddings_list = [emb.cpu() for emb in context_embeddings_tensor]
+
+                # Build arbitual_n_gram_memory_emb
+                arbitual_n_gram_memory_emb = []
+                idx = 0
+                for _ in range(group_amount):
+                    n_gram_emb = context_embeddings_list[idx : idx + max_n_gram_len]
+                    arbitual_n_gram_memory_emb.append(n_gram_emb)
+                    idx += max_n_gram_len
+
+                del context_embeddings_tensor, context_embeddings_list  # Cleanup
 
                 # result dict creation
                 probe_len_unit_sets = {}
                 for probe_len in range(2, target_length):
-                    arbitual_probe = arbitual_probe_group[probe_len - 1]
+                    probe_embs_for_len = probe_chunk_embeddings[0:probe_len]  # Embs for this probe_len prefix
                     probe_pos_unit_sets = {}
 
-                    for probe_pos in range(target_length - probe_len):
-                        arbitual_positive_group = []
-                        arbitual_negative_group = []
+                    probe_embedding = synthesis_probe_embeddings[probe_len - 2]
 
-                        for positive_n_gram in arbitual_n_gram_memory:
-                            crafted = positive_n_gram.copy()
-                            for chunk in reversed(arbitual_probe):
-                                crafted.insert(probe_pos, chunk)
-                            arbitual_positive_group.append(crafted)
+                    for probe_pos in range(target_length - probe_len + 1):  # +1 to include end
+                        positive_embeddings = []
+                        negative_embeddings = []
 
-                        for negative_n_gram in arbitual_n_gram_memory:
-                            crafted = negative_n_gram.copy()
-                            for chunk in arbitual_probe:
-                                crafted.insert(probe_pos, chunk)
-                            arbitual_negative_group.append(crafted)
+                        # Positive group (forward probe: effective AB order)
+                        for positive_n_gram_emb in arbitual_n_gram_memory_emb:
+                            crafted_embs = list(positive_n_gram_emb)  # Copy list of (D,) tensors
+                            # Insert reversed to achieve forward order (A then B)
+                            for chunk_emb in reversed(probe_embs_for_len):
+                                crafted_embs.insert(probe_pos, chunk_emb)
+                            # Now crafted_embs has target_length embs
+                            stack_embs = torch.stack(crafted_embs, dim=0)  # (target_length, D)
+                            partial = stack_embs.unsqueeze(0).to('cuda' if torch.cuda.is_available() else 'cpu')  # (1, target_length, D)
+                            group_member_emb = self.synthesizer.synthesize(partial).squeeze(0).cpu()  # (D,)
+                            if group_member_emb.dim() != 1:
+                                raise ValueError(f"Synthesizer output invalid: {group_member_emb.shape}")
+                            positive_embeddings.append(group_member_emb)
+                            del stack_embs, partial  # Cleanup
 
-                        ## TODO 1) embed the arbitual_positive_group and arbitual_negative_group
+                        # Negative group (reverse probe: effective BA order)
+                        for negative_n_gram_emb in arbitual_n_gram_memory_emb:
+                            crafted_embs = list(negative_n_gram_emb)  # Copy
+                            # Insert in order to achieve reverse (B then A)
+                            for chunk_emb in probe_embs_for_len:
+                                crafted_embs.insert(probe_pos, chunk_emb)
+                            stack_embs = torch.stack(crafted_embs, dim=0)
+                            partial = stack_embs.unsqueeze(0).to('cuda' if torch.cuda.is_available() else 'cpu')
+                            group_member_emb = self.synthesizer.synthesize(partial).squeeze(0).cpu()
+                            if group_member_emb.dim() != 1:
+                                raise ValueError(f"Synthesizer output invalid: {group_member_emb.shape}")
+                            negative_embeddings.append(group_member_emb)
+                            del stack_embs, partial
 
-                        ## TODO psudo-code
                         probe_pos_unit_sets[str(probe_pos)] = {
-                                "positive_embeddings" : [],
-                                "negative_embeddings" : []
-                            }
+                            "positive_embeddings": positive_embeddings,
+                            "negative_embeddings": negative_embeddings
+                        }
                     
                     probe_len_unit_sets[str(probe_len)] = {
-                        "probe_embedding": "psudo-embedding",
+                        "probe_embedding": probe_embedding,
                         "probe_pos_embeddings": probe_pos_unit_sets
                     }   
 
-                    # pop the n_gram_memory
-                    for positive_n_gram in arbitual_n_gram_memory:
-                        positive_n_gram.pop()
-
+                    # Hierarchical Data Inheritance: pop the last emb from each n-gram
+                    for n_gram_emb in arbitual_n_gram_memory_emb:
+                        if len(n_gram_emb) > 1:
+                            n_gram_emb.pop()  # Remove last, now smaller for next probe_len
                 
-                # 샘플 결과 저장
+                # Sample result
                 sample_dict = probe_len_unit_sets
                 sample_results.append(sample_dict)
 
@@ -504,7 +539,6 @@ class FinesseEvaluator:
 
                 # Batch embed all probe chunks for efficiency
                 chunk_embeddings_tensor = self.embedder.encode(test_probe_chunks)
-                probe_chunk_embeddings = [chunk_embeddings_tensor[i].cpu() for i in range(chunk_embeddings_tensor.size(0))]
 
                 # Synthesize cumulative embeddings progressively using text joining (native mode: no separate synthesizer)
                 synthesis_probe_embeddings = []
@@ -516,11 +550,7 @@ class FinesseEvaluator:
                     cumulative_text += text
                     
                     if i >= 1:  # Skip for i=0 (length 1 probe), start from length 2
-                        start_time = time.monotonic()
                         synth_emb_tensor = self.embedder.encode([cumulative_text])
-                        if torch.cuda.is_available():
-                            torch.cuda.synchronize()
-                        end_time = time.monotonic()
                         synth_emb_cpu = synth_emb_tensor[0].cpu()  # Take the first (and only) embedding
 
                         # Validate embedder output: must be 1D tensor (d_model,)
@@ -536,59 +566,81 @@ class FinesseEvaluator:
                         # Clean up GPU tensors
                         del synth_emb_tensor
 
-                # test group factory
-                max_n_gram_len = (target_length - 2)
-                n_gram_memory_chunks = self._get_text_chunck_from_database(target_length=max_n_gram_len * self.config.probe_config.group_amount, dataset=dataset, iterator=iterator)
+                # test group factory - Adjusted for symmetric context: fetch for group_amount only
+                group_amount = self.config.probe_config.group_amount
+                max_n_gram_len = target_length - 2
+                n_gram_memory_chunks = self._get_text_chunck_from_database(
+                    target_length=group_amount * max_n_gram_len, 
+                    dataset=dataset, 
+                    iterator=iterator
+                )
                 arbitual_n_gram_memory = []
-                for i in range(2 * self.config.probe_config.group_amount):
-                    n_gram = []
-                    for j in range(max_n_gram_len):
-                        n_gram.append(n_gram_memory_chunks[i * max_n_gram_len + j])
+                for i in range(group_amount):
+                    start_idx = i * max_n_gram_len
+                    n_gram = n_gram_memory_chunks[start_idx : start_idx + max_n_gram_len]
                     arbitual_n_gram_memory.append(n_gram)
 
                 # result dict creation
                 probe_len_unit_sets = {}
                 for probe_len in range(2, target_length):
-                    arbitual_probe = arbitual_probe_group[probe_len - 1]
+                    probe_texts_for_len = test_probe_chunks[0:probe_len]  # Strs for this probe_len prefix
                     probe_pos_unit_sets = {}
 
-                    for probe_pos in range(target_length - probe_len):
-                        arbitual_positive_group = []
-                        arbitual_negative_group = []
+                    probe_embedding = synthesis_probe_embeddings[probe_len - 2]
 
+                    for probe_pos in range(target_length - probe_len + 1):  # +1 to include end
+                        positive_texts = []
+                        negative_texts = []
+
+                        # Positive group (forward probe: effective AB order via reversed insert)
                         for positive_n_gram in arbitual_n_gram_memory:
-                            crafted = positive_n_gram.copy()
-                            for chunk in reversed(arbitual_probe):
-                                crafted.insert(probe_pos, chunk)
-                            arbitual_positive_group.append(crafted)
+                            crafted_strs = positive_n_gram.copy()  # List of str
+                            # Insert reversed to achieve forward order (A then B)
+                            for chunk_str in reversed(probe_texts_for_len):
+                                crafted_strs.insert(probe_pos, chunk_str)
+                            full_text = self.chunk_concat_sep.join(crafted_strs)
+                            positive_texts.append(full_text)
 
+                        # Negative group (reverse probe: effective BA order via direct insert)
                         for negative_n_gram in arbitual_n_gram_memory:
-                            crafted = negative_n_gram.copy()
-                            for chunk in arbitual_probe:
-                                crafted.insert(probe_pos, chunk)
-                            arbitual_negative_group.append(crafted)
+                            crafted_strs = negative_n_gram.copy()
+                            # Insert in order to achieve reverse (B then A)
+                            for chunk_str in probe_texts_for_len:
+                                crafted_strs.insert(probe_pos, chunk_str)
+                            full_text = self.chunk_concat_sep.join(crafted_strs)
+                            negative_texts.append(full_text)
 
-                        ## TODO 1) embed the arbitual_positive_group and arbitual_negative_group as texts
-                        ## In native mode: Join each crafted list to text with self.chunk_concat_sep, batch as positive_texts and negative_texts,
-                        ## then positive_embeddings = self.embedder.encode(positive_texts) → list of .cpu()
-                        ## similarly for negative_embeddings
+                        # Batch encode
+                        positive_emb_tensor = self.embedder.encode(positive_texts)
+                        positive_embeddings = [emb.cpu() for emb in positive_emb_tensor]
+                        for emb in positive_embeddings:
+                            if emb.dim() != 1:
+                                raise ValueError(f"Embedder output invalid: {emb.shape}")
 
-                        ## TODO pseudo-code
+                        negative_emb_tensor = self.embedder.encode(negative_texts)
+                        negative_embeddings = [emb.cpu() for emb in negative_emb_tensor]
+                        for emb in negative_embeddings:
+                            if emb.dim() != 1:
+                                raise ValueError(f"Embedder output invalid: {emb.shape}")
+
+                        del positive_emb_tensor, negative_emb_tensor  # Cleanup
+
                         probe_pos_unit_sets[str(probe_pos)] = {
-                                "positive_embeddings" : [],
-                                "negative_embeddings" : []
-                            }
+                            "positive_embeddings": positive_embeddings,
+                            "negative_embeddings": negative_embeddings
+                        }
                     
                     probe_len_unit_sets[str(probe_len)] = {
-                        "probe_embedding": "pseudo-embedding",
+                        "probe_embedding": probe_embedding,
                         "probe_pos_embeddings": probe_pos_unit_sets
                     }   
 
-                    # pop the n_gram_memory
-                    for positive_n_gram in arbitual_n_gram_memory:
-                        positive_n_gram.pop()
+                    # Hierarchical Data Inheritance: pop the last str from each n-gram
+                    for n_gram in arbitual_n_gram_memory:
+                        if len(n_gram) > 1:
+                            n_gram.pop()  # Remove last, now smaller for next probe_len
                 
-                # 샘플 결과 저장
+                # Sample result
                 sample_dict = probe_len_unit_sets
                 sample_results.append(sample_dict)
 
