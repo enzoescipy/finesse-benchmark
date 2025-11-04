@@ -25,6 +25,7 @@ def generate_raw_data(
     dataset_path: Optional[str] = typer.Option(None, help="Override HF dataset path"),
     output_dir: str = typer.Option("results", "--output", help="Directory to save raw embedding data"),
     num_seed: Optional[int] = typer.Option(None, "--seed", help="Random seed for dataset shuffling reproducibility"),
+    benchmark_mode: str = typer.Option("rss", "--mode", help="Benchmark type: 'rss' (default, Robustness to Sequence Scaling) or 'srs' (Sequence Recognition Sensitivity)."),
 ):
     """
     Generate raw embeddings from the Finesse benchmark dataset.
@@ -38,8 +39,11 @@ def generate_raw_data(
               This is the core blueprint for your evaluation. Use 'finesse init' to generate a template.
 
     Optional Arguments:
+    --mode: Benchmark type: 'rss' (default, Robustness to Sequence Scaling - measures scaling stability) or 'srs'
+            (Sequence Recognition Sensitivity - measures order/direction awareness in symmetric contexts).
+            Use 'srs' for advanced directional probing; 'rss' for standard performance.
     --output: Directory where the .pt file will be saved. Defaults to 'results/'. The filename will be
-              'embeddings_{mode}_{dataset_name}.pt' (e.g., embeddings_merger_mode_finesse-benchmark-database.pt).
+              'embeddings_{system_mode}_{benchmark_mode}_{dataset_name}.pt' (e.g., embeddings_merger_mode_rss_finesse-benchmark-database.pt).
     --dataset-path: Override the dataset path in your config (e.g., for local datasets or different HF repos).
     --samples: Override samples_per_length in probe_config (default from config is 25 for leaderboard reliability).
                Increase for more statistical power, but it will take longer to run.
@@ -47,18 +51,22 @@ def generate_raw_data(
 
     Usage Examples:
     $ finesse generate --config my_benchmark.yaml
-       # Basic run with default settings from config.
-    $ finesse generate --config leaderboard.yaml --output ./my_results --samples 50 --seed 123
-       # Leaderboard config, custom output, more samples for precision, different seed.
-    $ finesse generate --config byok_config.yaml --dataset-path ./local_data
-       # BYOK mode with local dataset override.
+       # Basic run with default 'rss' benchmark on merger_mode (from config).
+    $ finesse generate --config my_benchmark.yaml --mode srs
+       # Run 'srs' benchmark for directional sensitivity testing.
+    $ finesse generate --config leaderboard.yaml --output ./my_results --samples 50 --seed 123 --mode rss
+       # Leaderboard config, custom output, more samples for precision, different seed, explicit 'rss'.
+    $ finesse generate --config byok_config.yaml --dataset-path ./local_data --mode srs
+       # BYOK mode with local dataset override and 'srs' benchmark.
 
     Notes:
-    - For merger_mode: Uses sequence-merger with a base embedder (e.g., multilingual-e5-base).
-    - For native_mode: Directly uses a long-context embedder (e.g., snowflake-arctic-embed-l).
+    - System mode (merger_mode/native_mode/byok_mode) is set in config.yaml; --mode selects benchmark type (RSS/SRS).
+    - For merger_mode + srs: Calls merger_run_srs for synthesized directional probes.
+    - For native_mode/byok_mode + srs: Calls native_run_srs for text-based directional probes.
     - For byok_mode: Requires API keys set as environment variables (e.g., OPENAI_API_KEY). Do NOT hardcode keys in YAML.
-    - After running, use 'finesse score' on the output .pt to compute RSS scores.
+    - After running, use 'finesse score' on the output .pt to compute scores (RSS or SRS-specific).
     - Hardware Tip: Set advanced.batch_size in config based on your GPU memory; device auto-detects CUDA/CPU.
+    - SRS requires sequence_length.min >= 4 for valid probing; validate in config.
     """
     # Load config
     if not os.path.exists(config_path):
@@ -184,14 +192,24 @@ def generate_raw_data(
     # Run raw evaluation
     typer.echo("Generating raw embeddings...")
     raw_data = None
-    if config.mode == "merger_mode":
-        raw_data = evaluator.merger_run()
-    else:
-        raw_data = evaluator.native_run()
+    if benchmark_mode == "srs":
+        if config.mode == "merger_mode":
+            raw_data = evaluator.merger_run_srs()
+            typer.echo("  Running merger_run_srs for SRS benchmark.")
+        else:
+            raw_data = evaluator.native_run_srs()
+            typer.echo("  Running native_run_srs for SRS benchmark.")
+    else:  # rss
+        if config.mode == "merger_mode":
+            raw_data = evaluator.merger_run()
+            typer.echo("  Running merger_run for RSS benchmark.")
+        else:
+            raw_data = evaluator.native_run()
+            typer.echo("  Running native_run for RSS benchmark.")
     
     # Save full raw data (config + raw_results) to .pt file
     dataset_name = config.dataset.path.split('/')[-1]
-    save_path = os.path.join(output_dir, f"embeddings_{config.mode}_{dataset_name}.pt")
+    save_path = os.path.join(output_dir, f"embeddings_{config.mode}_{benchmark_mode}_{dataset_name}.pt")
     torch.save(raw_data, save_path)
     
     typer.echo(f"Raw data (with config) saved to {save_path}")

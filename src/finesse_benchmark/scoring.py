@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+from typing import List
 
 def calculate_self_attestation_scores(chunk_embeddings, synth_embeddings):
     """
@@ -177,3 +178,58 @@ def calculate_sample_latency(mode: str, chunk_times: list[float], synth_times: l
         'total_latency': total_latency,
         'synthesis_latency': synthesis_latency
     }
+
+def calculate_srs_score(probe_embedding: torch.Tensor, positive_embeddings: List[torch.Tensor], negative_embeddings: List[torch.Tensor]) -> float:
+    """
+    Calculate Sequence Recognition Sensitivity (SRS) score for a single probe position.
+    
+    SRS Philosophy:
+    - Measures model's awareness of order/direction: How well does the probe (AB) separate
+      from reversed probe groups (BA) in symmetric contexts?
+    - Robust Separation: Weakest 25% of expected matches (positive Q1) must exceed
+      strongest 75% of mismatches (negative Q3).
+    - Raw gap: Q1(positive sims) - Q3(negative sims). Positive gap indicates clear directionality.
+    
+    Args:
+        probe_embedding: 1D tensor (d_model,) - Embedding of the forward probe (e.g., synth(AB)).
+        positive_embeddings: List[torch.Tensor] - Embeddings of forward-inserted groups (ABX...), each (d_model,).
+        negative_embeddings: List[torch.Tensor] - Embeddings of reverse-inserted groups (BAX...), each (d_model,).
+
+    Returns:
+        float: Raw SRS gap score. Higher is better (clear separation). No normalization; aggregate upstream.
+    
+    Raises:
+        ValueError: If inputs are empty, mismatched dims, or invalid shapes.
+    """
+    if len(positive_embeddings) == 0 or len(negative_embeddings) == 0:
+        raise ValueError("Positive or negative embeddings list cannot be empty for SRS scoring.")
+
+    device = probe_embedding.device
+    if probe_embedding.dim() != 1:
+        raise ValueError(f"Probe embedding must be 1D tensor, got {probe_embedding.dim()}D with shape {probe_embedding.shape}")
+
+    d_model = probe_embedding.shape[0]
+    for group, group_name in [(positive_embeddings, 'positive'), (negative_embeddings, 'negative')]:
+        if any(emb.dim() != 1 or emb.shape[0] != d_model for emb in group):
+            raise ValueError(f"All {group_name} embeddings must be 1D tensors of dim {d_model}, but some are invalid.")
+
+    # Move to device and stack for efficiency
+    probe_on_device = probe_embedding.unsqueeze(0)  # (1, d_model)
+    pos_tensor = torch.stack([emb.to(device) for emb in positive_embeddings])  # (num_pos, d_model)
+    neg_tensor = torch.stack([emb.to(device) for emb in negative_embeddings])  # (num_neg, d_model)
+
+    # Compute cosine similarities
+    sims_positive = F.cosine_similarity(probe_on_device, pos_tensor, dim=1)  # (num_pos,)
+    sims_negative = F.cosine_similarity(probe_on_device, neg_tensor, dim=1)  # (num_neg,)
+
+    # Calculate quartiles
+    q1_positive = torch.quantile(sims_positive.float(), 0.25)
+    q3_negative = torch.quantile(sims_negative.float(), 0.75)
+
+    # Raw gap: Q1(pos) - Q3(neg)
+    srs_gap = (q1_positive - q3_negative).item()
+
+    # Cleanup
+    del pos_tensor, neg_tensor, sims_positive, sims_negative
+
+    return srs_gap

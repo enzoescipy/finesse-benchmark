@@ -197,7 +197,7 @@ class FinesseEvaluator:
                 'num_synth_steps': target_length
             }
 
-        return self._package_metadata_data(length_results=length_results)
+        return self._package_metadata_data(length_results=length_results, scoring_name='rss')
 
     def merger_run(self) -> Dict[str, Any]:
         """Finesse 벤치마크 실행: Stratified CSAT with Single-Pass Conveyor Belt (Raw mode - embeddings only)"""
@@ -313,11 +313,7 @@ class FinesseEvaluator:
                 'num_synth_steps': target_length
             }
 
-        return self._package_metadata_data(length_results=length_results)
-
-
-
-
+        return self._package_metadata_data(length_results=length_results, scoring_name='rss')
 
     def merger_run_srs(self) -> Dict[str, Any]:
         """Finesse 벤치마크 실행: Stratified CSAT with Single-Pass Conveyor Belt (Raw mode - embeddings only)"""
@@ -500,7 +496,7 @@ class FinesseEvaluator:
                 'num_synth_steps': target_length
             }
 
-        return self._package_metadata_data(length_results=length_results)
+        return self._package_metadata_data(length_results=length_results, scoring_name='srs')
 
     def native_run_srs(self) -> Dict[str, Any]:
         """Finesse 벤치마크 실행: Stratified CSAT with Single-Pass Conveyor Belt (Raw mode - embeddings only) - Native Mode"""
@@ -650,7 +646,7 @@ class FinesseEvaluator:
                 'num_synth_steps': target_length
             }
 
-        return self._package_metadata_data(length_results=length_results)
+        return self._package_metadata_data(length_results=length_results, scoring_name='srs')
 
 
 
@@ -665,7 +661,7 @@ class FinesseEvaluator:
 
 
 
-    def _package_metadata_data(self, length_results:Dict[int, Any]) -> Dict[str, Any]:
+    def _package_metadata_data(self, length_results:Dict[int, Any], scoring_name: str) -> Dict[str, Any]:
         # Add metadata for provenance
         try:
             version = importlib.metadata.version('finesse-benchmark')
@@ -707,7 +703,8 @@ class FinesseEvaluator:
             'package_versions': package_metadata,
             'dataset': dataset_metadata,
             'config': self.config.model_dump(),
-            'device_info': device_info
+            'device_info': device_info,
+            'scoring_method': scoring_name
         }
 
         return {
