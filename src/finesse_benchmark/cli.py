@@ -12,10 +12,10 @@ from importlib import resources
 from pathlib import Path
 import importlib.util
 from .utils import get_content_hash, get_model_hash
-from typing import Dict, List
+from typing import Dict, List, Any
 from .config import BenchmarkConfig, LocalModelSelector
 from .evaluator import FinesseEvaluator
-from .scoring import calculate_self_attestation_scores, calculate_self_attestation_scores_bottom_up, calculate_sample_latency
+from .scoring import calculate_self_attestation_scores, calculate_self_attestation_scores_bottom_up, calculate_sample_latency, calculate_srs_score
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -273,81 +273,54 @@ def score_embeddings(
         typer.echo("Error: No length results found in .pt file.")
         raise typer.Exit(code=1)
     
-    length_scores = {}
-    all_individual_scores = []
-    all_total_latencies = []
-    all_synthesis_latencies = []
+    scoring_method = metadata.get('scoring_method', 'rss')
     mode = config_dict.get('mode')
     
-    for target_length, raw in length_results.items():
-        sample_results = raw.get('sample_results', [])
-        sample_scores = []
-        total_latency_list = []
-        synthesis_latency_list = []
-        
-        for sample_dict in sample_results:
-            probe_embeddings = sample_dict.get('chunk_embeddings')
-            synthesis_embeddings = sample_dict.get('synthesis_embeddings')
+    if scoring_method == 'srs':
+        # Calculate SRS scores using helper
+        srs_data = _calculate_srs_scores(length_results)
+        length_scores = srs_data['length_scores']
+        all_individual_scores = srs_data['all_individual_scores']
 
-            if probe_embeddings and synthesis_embeddings and len(probe_embeddings) >= 2:
-                td_scores = calculate_self_attestation_scores(probe_embeddings, synthesis_embeddings)
-                bu_scores = calculate_self_attestation_scores_bottom_up(probe_embeddings, synthesis_embeddings) # num_synth_steps removed
-                
-                avg_td = td_scores['contextual_coherence']
-                avg_bu = bu_scores['bottom_up_coherence']
-                imbalance = abs(avg_td - avg_bu)
-                final_score = ((avg_td + avg_bu) / 2) - imbalance
-                sample_scores.append(final_score)
-            else:
-                sample_scores.append(0.0)
-            
-            # Calculate latencies for this sample
-            chunk_times = sample_dict.get('chunk_times', None)
-            synth_times = sample_dict.get('synth_times', [])
-            if mode and synth_times:
-                try:
-                    latency_dict = calculate_sample_latency(mode, chunk_times, synth_times)
-                    total_latency_list.append(latency_dict['total_latency'])
-                    synthesis_latency_list.append(latency_dict['synthesis_latency'])
-                except Exception as e:
-                    # Fallback for invalid data
-                    total_latency_list.append(0.0)
-                    synthesis_latency_list.append(0.0)
-            else:
-                total_latency_list.append(0.0)
-                synthesis_latency_list.append(0.0)
-
-        # Store scaled RSS and rounded latency scores as lists
-        scaled_rss = [round(score * 500, 6) for score in sample_scores]
-        scaled_total = [round(t, 6) for t in total_latency_list]
-        scaled_synth = [round(s, 6) for s in synthesis_latency_list]
+        # Averages (no latencies for SRS)
+        avg_srs = np.mean(all_individual_scores) if all_individual_scores else 0.0
+        avg_srs = round(avg_srs, 6)
         
-        length_scores[target_length] = {
-            'rss_scores': scaled_rss,
-            'total_latency_scores': scaled_total,  # ms, cold start
-            'synthesis_latency_scores': scaled_synth  # ms, warm start
+        # Prepare base results without hash
+        base_results = {
+            'config': config_dict,
+            'average_srs': avg_srs,
+            'length_scores': length_scores,
+            'metadata': metadata  # Includes device_info for hardware provenance from .pt
         }
-        all_individual_scores.extend(scaled_rss)
-        all_total_latencies.extend(scaled_total)
-        all_synthesis_latencies.extend(scaled_synth)
+        typer.echo("Computed SRS scores.")
+    else:
+        # RSS branch
+        # Calculate RSS scores using helper
+        rss_data = _calculate_rss_scores(length_results, mode)
+        length_scores = rss_data['length_scores']
+        all_individual_scores = rss_data['all_individual_scores']
+        all_total_latencies = rss_data['all_total_latencies']
+        all_synthesis_latencies = rss_data['all_synthesis_latencies']
 
-    # Averages
-    avg_rss = np.mean(all_individual_scores) if all_individual_scores else 0.0
-    avg_rss = round(avg_rss, 6)
-    avg_total_latency = np.mean(all_total_latencies) if all_total_latencies else 0.0
-    avg_total_latency = round(avg_total_latency, 6)
-    avg_synthesis_latency = np.mean(all_synthesis_latencies) if all_synthesis_latencies else 0.0
-    avg_synthesis_latency = round(avg_synthesis_latency, 6)
-    
-    # Prepare base results without hash
-    base_results = {
-        'config': config_dict,
-        'average_rss': avg_rss,
-        'average_total_latency': avg_total_latency,
-        'average_synthesis_latency': avg_synthesis_latency,
-        'length_scores': length_scores,
-        'metadata': metadata  # Includes device_info for hardware provenance from .pt
-    }
+        # Averages
+        avg_rss = np.mean(all_individual_scores) if all_individual_scores else 0.0
+        avg_rss = round(avg_rss, 6)
+        avg_total_latency = np.mean(all_total_latencies) if all_total_latencies else 0.0
+        avg_total_latency = round(avg_total_latency, 6)
+        avg_synthesis_latency = np.mean(all_synthesis_latencies) if all_synthesis_latencies else 0.0
+        avg_synthesis_latency = round(avg_synthesis_latency, 6)
+        
+        # Prepare base results without hash
+        base_results = {
+            'config': config_dict,
+            'average_rss': avg_rss,
+            'average_total_latency': avg_total_latency,
+            'average_synthesis_latency': avg_synthesis_latency,
+            'length_scores': length_scores,
+            'metadata': metadata  # Includes device_info for hardware provenance from .pt
+        }
+        typer.echo("Computed RSS scores.")
     
     # Compute model hash for notarization (before content_hash)
     try:
@@ -1008,7 +981,140 @@ def verify(
         typer.echo(f"❌ Error: {str(e)}")
         raise typer.Exit(code=1)
 
+def _calculate_rss_scores(length_results: Dict[int, Any], mode: str) -> Dict[str, Any]:
+    """Helper to compute RSS scores for all lengths and samples."""
+    length_scores = {}
+    all_individual_scores = []
+    all_total_latencies = []
+    all_synthesis_latencies = []
+    
+    for target_length, raw in length_results.items():
+        sample_results = raw.get('sample_results', [])
+        sample_scores = []
+        total_latency_list = []
+        synthesis_latency_list = []
+        
+        for sample_dict in sample_results:
+            probe_embeddings = sample_dict.get('chunk_embeddings')
+            synthesis_embeddings = sample_dict.get('synthesis_embeddings')
 
+            if probe_embeddings and synthesis_embeddings and len(probe_embeddings) >= 2:
+                td_scores = calculate_self_attestation_scores(probe_embeddings, synthesis_embeddings)
+                bu_scores = calculate_self_attestation_scores_bottom_up(probe_embeddings, synthesis_embeddings)
+                
+                avg_td = td_scores['contextual_coherence']
+                avg_bu = bu_scores['bottom_up_coherence']
+                imbalance = abs(avg_td - avg_bu)
+                final_score = ((avg_td + avg_bu) / 2) - imbalance
+                sample_scores.append(final_score)
+            else:
+                sample_scores.append(0.0)
+            
+            # Calculate latencies for this sample
+            chunk_times = sample_dict.get('chunk_times', None)
+            synth_times = sample_dict.get('synth_times', [])
+            if mode and synth_times:
+                try:
+                    latency_dict = calculate_sample_latency(mode, chunk_times, synth_times)
+                    total_latency_list.append(latency_dict['total_latency'])
+                    synthesis_latency_list.append(latency_dict['synthesis_latency'])
+                except Exception as e:
+                    # Fallback for invalid data
+                    total_latency_list.append(0.0)
+                    synthesis_latency_list.append(0.0)
+            else:
+                total_latency_list.append(0.0)
+                synthesis_latency_list.append(0.0)
+
+        # Store scaled RSS and rounded latency scores as lists
+        scaled_rss = [round(score * 500, 6) for score in sample_scores]
+        scaled_total = [round(t, 6) for t in total_latency_list]
+        scaled_synth = [round(s, 6) for s in synthesis_latency_list]
+        
+        length_scores[target_length] = {
+            'rss_scores': scaled_rss,
+            'total_latency_scores': scaled_total,  # ms, cold start
+            'synthesis_latency_scores': scaled_synth  # ms, warm start
+        }
+        all_individual_scores.extend(scaled_rss)
+        all_total_latencies.extend(scaled_total)
+        all_synthesis_latencies.extend(scaled_synth)
+    
+    return {
+        'length_scores': length_scores,
+        'all_individual_scores': all_individual_scores,
+        'all_total_latencies': all_total_latencies,
+        'all_synthesis_latencies': all_synthesis_latencies
+    }
+
+def _calculate_srs_scores(length_results: Dict[int, Any]) -> Dict[str, Any]:
+    """Helper to compute SRS scores while preserving the hierarchical structure.
+
+    Transforms the nested embedding structure into a structure of SRS scores:
+    For each target_length:
+        length_scores[target_length] = {
+            'sample_results': [
+                {  # Sample 1
+                    '2': [srs_score_pos0, srs_score_pos1, ...],  # List of scores per probe_pos for probe_len=2
+                    '3': [srs_score_pos0, ...],  # For probe_len=3
+                    ...
+                },
+                ...  # 25 samples
+            ]
+        }
+    Flattens all individual scores for averaging.
+    """
+    length_scores = {}
+    all_individual_scores = []
+
+    for target_length, raw in length_results.items():
+        sample_results = raw.get('sample_results', [])
+        processed_samples = []
+
+        for sample_idx, sample_dict in enumerate(sample_results):
+            if not isinstance(sample_dict, dict):
+                continue  # Skip invalid samples
+
+            new_sample = {}  # {probe_len: [scores for pos0, pos1, ...]}
+            all_scores_for_sample = []  # Temp for flattening
+
+            for probe_len_str, probe_data in sample_dict.items():
+                if not isinstance(probe_data, dict) or 'probe_embedding' not in probe_data:
+                    continue  # Invalid probe_len data
+
+                probe_embedding = probe_data['probe_embedding']
+                pos_embeddings_dict = probe_data.get('probe_pos_embeddings', {})
+
+                scores_for_probe_len = []  # List of SRS scores for each probe_pos
+
+                for pos_str, pos_data in pos_embeddings_dict.items():
+                    if not isinstance(pos_data, dict):
+                        continue
+
+                    pos_group = pos_data.get('positive_embeddings', [])
+                    neg_group = pos_data.get('negative_embeddings', [])
+
+                    try:
+                        srs_score = calculate_srs_score(probe_embedding, pos_group, neg_group)
+                        scores_for_probe_len.append(round(srs_score, 6))
+                        all_scores_for_sample.append(round(srs_score, 6))
+                    except ValueError:
+                        scores_for_probe_len.append(0.0)
+                        all_scores_for_sample.append(0.0)
+
+                new_sample[probe_len_str] = scores_for_probe_len
+
+            processed_samples.append(new_sample)
+            all_individual_scores.extend(all_scores_for_sample)
+
+        length_scores[target_length] = {
+            'sample_results': processed_samples
+        }
+
+    return {
+        'length_scores': length_scores,
+        'all_individual_scores': all_individual_scores
+    }
 
 if __name__ == "__main__":
     app()
