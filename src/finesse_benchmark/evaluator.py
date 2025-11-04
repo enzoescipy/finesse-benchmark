@@ -317,6 +317,8 @@ class FinesseEvaluator:
 
 
 
+
+
     def merger_run_srs(self) -> Dict[str, Any]:
         """Finesse 벤치마크 실행: Stratified CSAT with Single-Pass Conveyor Belt (Raw mode - embeddings only)"""
         # Load dataset with specific revision for declarative reproducibility
@@ -405,17 +407,13 @@ class FinesseEvaluator:
 
                 # test group factory
                 max_n_gram_len = (target_length - 2)
-                n_gram_memory_chunks = self._get_text_chunck_from_database(target_length=max_n_gram_len * 2 * self.config.probe_config.group_amount, dataset=dataset, iterator=iterator)
-                arbitual_n_gram_memory_positive = []
-                arbitual_n_gram_memory_negative = []
+                n_gram_memory_chunks = self._get_text_chunck_from_database(target_length=max_n_gram_len * self.config.probe_config.group_amount, dataset=dataset, iterator=iterator)
+                arbitual_n_gram_memory = []
                 for i in range(2 * self.config.probe_config.group_amount):
                     n_gram = []
                     for j in range(max_n_gram_len):
                         n_gram.append(n_gram_memory_chunks[i * max_n_gram_len + j])
-                    if (i % 2 == 0):
-                        arbitual_n_gram_memory_positive.append(n_gram)
-                    else:
-                        arbitual_n_gram_memory_negative.append(n_gram)
+                    arbitual_n_gram_memory.append(n_gram)
 
                 # result dict creation
                 probe_len_unit_sets = {}
@@ -427,14 +425,14 @@ class FinesseEvaluator:
                         arbitual_positive_group = []
                         arbitual_negative_group = []
 
-                        for positive_n_gram in arbitual_n_gram_memory_positive:
-                            crafted = positive_n_gram
+                        for positive_n_gram in arbitual_n_gram_memory:
+                            crafted = positive_n_gram.copy()
                             for chunk in reversed(arbitual_probe):
                                 crafted.insert(probe_pos, chunk)
                             arbitual_positive_group.append(crafted)
 
-                        for negative_n_gram in arbitual_n_gram_memory_negative:
-                            crafted = negative_n_gram
+                        for negative_n_gram in arbitual_n_gram_memory:
+                            crafted = negative_n_gram.copy()
                             for chunk in arbitual_probe:
                                 crafted.insert(probe_pos, chunk)
                             arbitual_negative_group.append(crafted)
@@ -453,10 +451,8 @@ class FinesseEvaluator:
                     }   
 
                     # pop the n_gram_memory
-                    for positive_n_gram in arbitual_n_gram_memory_positive:
+                    for positive_n_gram in arbitual_n_gram_memory:
                         positive_n_gram.pop()
-                    for negative_n_gram in arbitual_n_gram_memory_negative:
-                        negative_n_gram.pop
 
                 
                 # 샘플 결과 저장
