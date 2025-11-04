@@ -315,6 +315,175 @@ class FinesseEvaluator:
 
         return self._package_metadata_data(length_results=length_results)
 
+
+
+    def merger_run_srs(self) -> Dict[str, Any]:
+        """Finesse 벤치마크 실행: Stratified CSAT with Single-Pass Conveyor Belt (Raw mode - embeddings only)"""
+        # Load dataset with specific revision for declarative reproducibility
+        dataset = self._dataset_prepare_and_validate()
+        iterator = iter(dataset)
+
+        # find min, max length
+        min_length, max_length = self.config.probe_config.sequence_length.min, self.config.probe_config.sequence_length.max
+
+
+        # Warm-up phase: Initialize models with dummy data to avoid cold-start latency
+        dummy_samples = [
+            "This is a warm-up dummy sentence 1.",
+            "This is a warm-up dummy sentence 2."
+        ]
+
+        # Warm-up embedder
+        _ = self.embedder.encode(dummy_samples)
+        # Warm-up synthesizer incrementally
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        dummy_embs = self.embedder.encode(dummy_samples)
+        cumulative = torch.empty((0, dummy_embs.shape[1]), dtype=dummy_embs.dtype, device=device)
+        for emb in dummy_embs:
+            single_on_device = emb.unsqueeze(0).to(device)
+            cumulative = torch.cat([cumulative, single_on_device], dim=0)
+            partial_embs = cumulative.unsqueeze(0)  # (1, i+1, D)
+            _ = self.synthesizer.synthesize(partial_embs).squeeze(0)
+        del cumulative  # Cleanup
+
+        # All warm-up results discarded; models now warmed up
+
+        length_results = {}  # 길이별 결과 저장: {'sample_results': [dicts], 'num_synth_steps': N}
+
+        for target_length in range(min_length, max_length + 1):
+            typer.echo(f"probe sequence [{target_length}] in progress ...")
+            
+            sample_results = []  # List of 25 dicts per length
+
+            # target_length 개의 청크로 구성된 시퀀스를 samples_per_length번 테스트
+            while len(sample_results) < self.config.probe_config.samples_per_length:
+                
+                # testing probe chunks yield
+                test_probe_chunks = self._get_text_chunck_from_database(target_length=target_length - 1, dataset=dataset, iterator=iterator)
+                
+                arbitual_probe_group = []
+                current_probe = []
+                for i in range(len(test_probe_chunks)):
+                    current_probe.append(test_probe_chunks[i])
+                    arbitual_probe_group.append(tuple(current_probe))
+
+                # Batch embed all probe chunks for efficiency
+                chunk_embeddings_tensor = self.embedder.encode(test_probe_chunks)
+                probe_chunk_embeddings = [chunk_embeddings_tensor[i].cpu() for i in range(chunk_embeddings_tensor.size(0))]
+
+                # Synthesize cumulative embeddings progressively, starting from length 2
+                device = 'cuda' if torch.cuda.is_available() else 'cpu'
+                synthesis_probe_embeddings = []
+                cumulative_embeddings = torch.empty((0, probe_chunk_embeddings[0].shape[0]), dtype=probe_chunk_embeddings[0].dtype, device=device)
+
+                for i, emb in enumerate(probe_chunk_embeddings):
+                    single_on_device = emb.to(device).unsqueeze(0)
+                    cumulative_embeddings = torch.cat([cumulative_embeddings, single_on_device], dim=0)
+                    
+                    if i >= 1:  # Skip synthesis for i=0 (length 1 probe), start from length 2
+                        partial_embs = cumulative_embeddings.unsqueeze(0)  # (1, i+1, D)
+                        synth_emb = self.synthesizer.synthesize(partial_embs).squeeze(0)
+                        synth_emb_cpu = synth_emb.cpu()
+
+                        # Validate synthesizer output
+                        if synth_emb_cpu.dim() != 1:
+                            raise ValueError(
+                                f"Synthesizer contract violation: synthesize() must return a 1D tensor, "
+                                f"but instead returned a {synth_emb_cpu.dim()}-dimensional tensor with shape {synth_emb_cpu.shape}. "
+                                "Please check your custom synthesizer's output format."
+                            )
+
+                        synthesis_probe_embeddings.append(synth_emb_cpu)
+
+                        # Clean up GPU tensors
+                        del partial_embs, synth_emb
+                    
+                    # Clean up single_on_device regardless
+                    del single_on_device
+
+                del cumulative_embeddings  # Final cleanup
+
+                # test group factory
+                max_n_gram_len = (target_length - 2)
+                n_gram_memory_chunks = self._get_text_chunck_from_database(target_length=max_n_gram_len * 2 * self.config.probe_config.group_amount, dataset=dataset, iterator=iterator)
+                arbitual_n_gram_memory_positive = []
+                arbitual_n_gram_memory_negative = []
+                for i in range(2 * self.config.probe_config.group_amount):
+                    n_gram = []
+                    for j in range(max_n_gram_len):
+                        n_gram.append(n_gram_memory_chunks[i * max_n_gram_len + j])
+                    if (i % 2 == 0):
+                        arbitual_n_gram_memory_positive.append(n_gram)
+                    else:
+                        arbitual_n_gram_memory_negative.append(n_gram)
+
+                # result dict creation
+                probe_len_unit_sets = {}
+                for probe_len in range(2, target_length):
+                    arbitual_probe = arbitual_probe_group[probe_len - 1]
+                    probe_pos_unit_sets = {}
+
+                    for probe_pos in range(target_length - probe_len):
+                        arbitual_positive_group = []
+                        arbitual_negative_group = []
+
+                        for positive_n_gram in arbitual_n_gram_memory_positive:
+                            crafted = positive_n_gram
+                            for chunk in reversed(arbitual_probe):
+                                crafted.insert(probe_pos, chunk)
+                            arbitual_positive_group.append(crafted)
+
+                        for negative_n_gram in arbitual_n_gram_memory_negative:
+                            crafted = negative_n_gram
+                            for chunk in arbitual_probe:
+                                crafted.insert(probe_pos, chunk)
+                            arbitual_negative_group.append(crafted)
+
+                        ## TODO 1) embed the arbitual_positive_group and arbitual_negative_group
+
+                        ## TODO psudo-code
+                        probe_pos_unit_sets[str(probe_pos)] = {
+                                "positive_embeddings" : [],
+                                "negative_embeddings" : []
+                            }
+                    
+                    probe_len_unit_sets[str(probe_len)] = {
+                        "probe_embedding": "psudo-embedding",
+                        "probe_pos_embeddings": probe_pos_unit_sets
+                    }   
+
+                    # pop the n_gram_memory
+                    for positive_n_gram in arbitual_n_gram_memory_positive:
+                        positive_n_gram.pop()
+                    for negative_n_gram in arbitual_n_gram_memory_negative:
+                        negative_n_gram.pop
+
+                
+                # 샘플 결과 저장
+                sample_dict = probe_len_unit_sets
+                sample_results.append(sample_dict)
+
+            # 이 길이에 대한 결과 저장
+            length_results[target_length] = {
+                'sample_results': sample_results,
+                'num_synth_steps': target_length
+            }
+
+        return self._package_metadata_data(length_results=length_results)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     def _package_metadata_data(self, length_results:Dict[int, Any]) -> Dict[str, Any]:
         # Add metadata for provenance
         try:
