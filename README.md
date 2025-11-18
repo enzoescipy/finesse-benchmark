@@ -5,6 +5,8 @@
 [![Blog](https://img.shields.io/badge/Blog-Article-orange?logo=medium)](https://www.winter-sci-dev.com/posts/embed-sequence-merger-vbert-ppe-article/)
 [![huggingface](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Model-blue)](https://huggingface.co/spaces/enzoescipy/finesse-benchmark-space)
 
+> **[vBERT: Vector Sequence Merger for Limited Embedding Context Extension](https://zenodo.org/records/17641563)**
+
 ## Introduction
 
 The **Finesse Benchmark** is a sophisticated evaluation framework designed to assess the performance of long-context embedding models on semantic understanding and information retention. Unlike traditional benchmarks that rely on superficial metrics, Finesse focuses on **Relative Semantic Similarity (RSS)**—a robust metric that measures how well models distinguish between relevant ("memory") and irrelevant ("noise") chunks in long sequences.
