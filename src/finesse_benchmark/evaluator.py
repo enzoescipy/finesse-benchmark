@@ -253,16 +253,19 @@ class FinesseEvaluator:
                 # 청크들 임베딩 with timing
                 chunk_times = []
                 chunk_embeddings_list = []
+                merger_perspective_list = []
                 for text in chunk_texts:
                     single_texts = [text]
                     start_time = time.monotonic()
                     single_emb_tensor = self.embedder.encode(single_texts)
+                    merger_perspective = self.synthesizer.synthesize(single_emb_tensor.unsqueeze(1))
                     if torch.cuda.is_available():
                         torch.cuda.synchronize()
                     end_time = time.monotonic()
                     elapsed_ms = (end_time - start_time) * 1000
                     chunk_times.append(elapsed_ms)
                     chunk_embeddings_list.append(single_emb_tensor[0].cpu())
+                    merger_perspective_list.append(merger_perspective[0].cpu())
                 chunk_embeddings = chunk_embeddings_list
 
                 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -300,7 +303,7 @@ class FinesseEvaluator:
                 
                 # 샘플 결과 저장
                 sample_dict = {
-                    'chunk_embeddings': chunk_embeddings,
+                    'chunk_embeddings': merger_perspective_list,
                     'synthesis_embeddings': synthesis_embeddings,
                     'chunk_times': chunk_times,
                     'synth_times': synth_times
