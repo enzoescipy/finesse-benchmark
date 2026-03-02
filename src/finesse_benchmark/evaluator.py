@@ -419,10 +419,23 @@ class FinesseEvaluator:
                     n_gram = n_gram_memory_chunks[start_idx : start_idx + max_n_gram_len]
                     arbitual_n_gram_memory.append(n_gram)
 
-                # Pre-embed context chunks
+                # Pre-embed context chunks with mini-batching to prevent VRAM spike
                 n_gram_memory_flat = [chunk for sublist in arbitual_n_gram_memory for chunk in sublist]
-                context_embeddings_tensor = self.embedder.encode(n_gram_memory_flat)
-                context_embeddings_list = [emb.cpu() for emb in context_embeddings_tensor]
+                context_embeddings_list = []
+
+                # Mini-batch encoding for context chunks
+                num_context_chunks = len(n_gram_memory_flat)
+                for start_idx in range(0, num_context_chunks, batch_size):
+                    end_idx = min(start_idx + batch_size, num_context_chunks)
+                    mini_batch = n_gram_memory_flat[start_idx:end_idx]
+
+                    context_emb_tensor = self.embedder.encode(mini_batch)
+                    for emb in context_emb_tensor:
+                        context_embeddings_list.append(emb.cpu())
+
+                    del context_emb_tensor
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
 
                 # Build arbitual_n_gram_memory_emb
                 arbitual_n_gram_memory_emb = []
@@ -432,7 +445,7 @@ class FinesseEvaluator:
                     arbitual_n_gram_memory_emb.append(n_gram_emb)
                     idx += max_n_gram_len
 
-                del context_embeddings_tensor, context_embeddings_list  # Cleanup
+                del context_embeddings_list  # Cleanup
 
                 # result dict creation
                 probe_len_unit_sets = {}
