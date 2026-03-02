@@ -1,8 +1,13 @@
 # Finesse Benchmark Configuration
 # This file configures the benchmark modes, models, probe settings, etc.
+
+# 'rss' (default, Robustness to Sequence Scaling) or 'srs' (Sequence Recognition Sensitivity).
+# 'q1q3' for the most tricky evaluation, 'q2q2' for the more naive evaluation.
+metric: "rss"
+formula: "q1q3"
+
 # For merger_mode: Use sequence-merger with a base embedder.
 # For native_mode: Use a long-context native embedder directly.
-
 mode: "merger_mode" # Options: "merger_mode", "native_mode", or "byok_mode"
 
 # Models Configuration

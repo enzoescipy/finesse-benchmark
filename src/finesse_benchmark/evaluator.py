@@ -318,7 +318,7 @@ class FinesseEvaluator:
 
         return self._package_metadata_data(length_results=length_results, scoring_name='rss')
 
-    def merger_run_srs(self) -> Dict[str, Any]:
+    def merger_run_srs(self, batch_size = 64) -> Dict[str, Any]:
         """Finesse 벤치마크 실행: Stratified CSAT with Single-Pass Conveyor Belt (Raw mode - embeddings only)"""
         # Load dataset with specific revision for declarative reproducibility
         dataset = self._dataset_prepare_and_validate()
@@ -442,44 +442,86 @@ class FinesseEvaluator:
 
                     probe_embedding = synthesis_probe_embeddings[probe_len - 2]
 
-                    for probe_pos in range(target_length - probe_len + 1):  # +1 to include end
-                        positive_embeddings = []
-                        negative_embeddings = []
+                # Collect-Then-Batch: Prepare all sequences for batch synthesis
+                sequences_to_batch = []  # List of (target_length, D) tensors
+                metadata_list = []  # List of (probe_pos, group_type, group_idx)
 
-                        # Positive group (forward probe: effective AB order)
-                        for positive_n_gram_emb in arbitual_n_gram_memory_emb:
-                            crafted_embs = list(positive_n_gram_emb)  # Copy list of (D,) tensors
-                            # Insert reversed to achieve forward order (A then B)
-                            for chunk_emb in reversed(probe_embs_for_len):
-                                crafted_embs.insert(probe_pos, chunk_emb)
-                            # Now crafted_embs has target_length embs
-                            stack_embs = torch.stack(crafted_embs, dim=0)  # (target_length, D)
-                            partial = stack_embs.unsqueeze(0).to('cuda' if torch.cuda.is_available() else 'cpu')  # (1, target_length, D)
-                            group_member_emb = self.synthesizer.synthesize(partial).squeeze(0).cpu()  # (D,)
-                            if group_member_emb.dim() != 1:
-                                raise ValueError(f"Synthesizer output invalid: {group_member_emb.shape}")
-                            positive_embeddings.append(group_member_emb)
-                            del stack_embs, partial  # Cleanup
+                for probe_pos in range(target_length - probe_len + 1):  # +1 to include end
+                    # Positive group (forward probe: effective AB order)
+                    for group_idx, positive_n_gram_emb in enumerate(arbitual_n_gram_memory_emb):
+                        crafted_embs = list(positive_n_gram_emb)  # Copy list of (D,) tensors
+                        # Insert reversed to achieve forward order (A then B)
+                        for chunk_emb in reversed(probe_embs_for_len):
+                            crafted_embs.insert(probe_pos, chunk_emb)
+                        # Now crafted_embs has target_length embs
+                        stack_embs = torch.stack(crafted_embs, dim=0)  # (target_length, D)
+                        sequences_to_batch.append(stack_embs)
+                        metadata_list.append((probe_pos, 'positive', group_idx))
 
-                        # Negative group (reverse probe: effective BA order)
-                        for negative_n_gram_emb in arbitual_n_gram_memory_emb:
-                            crafted_embs = list(negative_n_gram_emb)  # Copy
-                            # Insert in order to achieve reverse (B then A)
-                            for chunk_emb in probe_embs_for_len:
-                                crafted_embs.insert(probe_pos, chunk_emb)
-                            stack_embs = torch.stack(crafted_embs, dim=0)
-                            partial = stack_embs.unsqueeze(0).to('cuda' if torch.cuda.is_available() else 'cpu')
-                            group_member_emb = self.synthesizer.synthesize(partial).squeeze(0).cpu()
-                            if group_member_emb.dim() != 1:
-                                raise ValueError(f"Synthesizer output invalid: {group_member_emb.shape}")
-                            negative_embeddings.append(group_member_emb)
-                            del stack_embs, partial
+                    # Negative group (reverse probe: effective BA order)
+                    for group_idx, negative_n_gram_emb in enumerate(arbitual_n_gram_memory_emb):
+                        crafted_embs = list(negative_n_gram_emb)  # Copy
+                        # Insert in order to achieve reverse (B then A)
+                        for chunk_emb in probe_embs_for_len:
+                            crafted_embs.insert(probe_pos, chunk_emb)
+                        stack_embs = torch.stack(crafted_embs, dim=0)  # (target_length, D)
+                        sequences_to_batch.append(stack_embs)
+                        metadata_list.append((probe_pos, 'negative', group_idx))
 
+                # Mini-batch synthesis to avoid OOM
+                all_results = []  # List to collect all synthesized embeddings
+
+                if sequences_to_batch:
+                    num_sequences = len(sequences_to_batch)
+                    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+                    for start_idx in range(0, num_sequences, batch_size):
+                        end_idx = min(start_idx + batch_size, num_sequences)
+                        mini_batch = sequences_to_batch[start_idx:end_idx]
+
+                        # Stack mini-batch: (mini_batch_size, target_length, D)
+                        batch_tensor = torch.stack(mini_batch, dim=0).to(device)
+
+                        # Synthesize mini-batch
+                        batch_results = self.synthesizer.synthesize(batch_tensor)  # (mini_batch_size, D)
+                        batch_results_cpu = batch_results.cpu()
+
+                        # Validate output
+                        if batch_results_cpu.dim() != 2:
+                            raise ValueError(f"Synthesizer batch output invalid: {batch_results_cpu.shape}")
+
+                        # Collect results
+                        all_results.append(batch_results_cpu)
+
+                        # Cleanup mini-batch tensors
+                        del batch_tensor, batch_results, batch_results_cpu
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+
+                    # Concatenate all mini-batch results
+                    final_results = torch.cat(all_results, dim=0)  # (num_sequences, D)
+
+                    # Unpack results using metadata
+                    results_by_pos = {pos: {'positive': [None] * len(arbitual_n_gram_memory_emb),
+                                            'negative': [None] * len(arbitual_n_gram_memory_emb)}
+                                      for pos in range(target_length - probe_len + 1)}
+
+                    for idx, (probe_pos, group_type, group_idx) in enumerate(metadata_list):
+                        group_member_emb = final_results[idx]
+                        if group_member_emb.dim() != 1:
+                            raise ValueError(f"Synthesizer output invalid: {group_member_emb.shape}")
+                        results_by_pos[probe_pos][group_type][group_idx] = group_member_emb
+
+                    # Cleanup final results
+                    del final_results, all_results
+    
+                    # Populate probe_pos_unit_sets from results_by_pos
+                    for probe_pos in range(target_length - probe_len + 1):
                         probe_pos_unit_sets[str(probe_pos)] = {
-                            "positive_embeddings": positive_embeddings,
-                            "negative_embeddings": negative_embeddings
+                            "positive_embeddings": results_by_pos[probe_pos]['positive'],
+                            "negative_embeddings": results_by_pos[probe_pos]['negative']
                         }
-                    
+    
                     probe_len_unit_sets[str(probe_len)] = {
                         "probe_embedding": probe_embedding,
                         "probe_pos_embeddings": probe_pos_unit_sets
@@ -502,7 +544,7 @@ class FinesseEvaluator:
 
         return self._package_metadata_data(length_results=length_results, scoring_name='srs')
 
-    def native_run_srs(self) -> Dict[str, Any]:
+    def native_run_srs(self, batch_size = 64) -> Dict[str, Any]:
         """Finesse 벤치마크 실행: Stratified CSAT with Single-Pass Conveyor Belt (Raw mode - embeddings only) - Native Mode"""
         # Load dataset with specific revision for declarative reproducibility
         dataset = self._dataset_prepare_and_validate()
@@ -606,48 +648,96 @@ class FinesseEvaluator:
 
                     probe_embedding = synthesis_probe_embeddings[probe_len - 2]
 
-                    for probe_pos in range(target_length - probe_len + 1):  # +1 to include end
-                        positive_texts = []
-                        negative_texts = []
+                    # Collect-Then-Batch: Prepare all texts for batch encoding
+                    all_positive_texts = []  # List of full_text strings
+                    all_negative_texts = []  # List of full_text strings
+                    metadata_list = []  # List of (probe_pos, 'positive'/'negative', group_idx)
 
+                    for probe_pos in range(target_length - probe_len + 1):  # +1 to include end
                         # Positive group (forward probe: effective AB order via reversed insert)
-                        for positive_n_gram in arbitual_n_gram_memory:
+                        for group_idx, positive_n_gram in enumerate(arbitual_n_gram_memory):
                             crafted_strs = positive_n_gram.copy()  # List of str
                             # Insert reversed to achieve forward order (A then B)
                             for chunk_str in reversed(probe_texts_for_len):
                                 crafted_strs.insert(probe_pos, chunk_str)
                             full_text = self.chunk_concat_sep.join(crafted_strs)
-                            positive_texts.append(full_text)
+                            all_positive_texts.append(full_text)
+                            metadata_list.append((probe_pos, 'positive', group_idx))
 
                         # Negative group (reverse probe: effective BA order via direct insert)
-                        for negative_n_gram in arbitual_n_gram_memory:
+                        for group_idx, negative_n_gram in enumerate(arbitual_n_gram_memory):
                             crafted_strs = negative_n_gram.copy()
                             # Insert in order to achieve reverse (B then A)
                             for chunk_str in probe_texts_for_len:
                                 crafted_strs.insert(probe_pos, chunk_str)
                             full_text = self.chunk_concat_sep.join(crafted_strs)
-                            negative_texts.append(full_text)
+                            all_negative_texts.append(full_text)
+                            metadata_list.append((probe_pos, 'negative', group_idx))
 
-                        # Batch encode
-                        positive_emb_tensor = self.embedder.encode(positive_texts)
-                        positive_embeddings = [emb.cpu() for emb in positive_emb_tensor]
-                        for emb in positive_embeddings:
-                            if emb.dim() != 1:
-                                raise ValueError(f"Embedder output invalid: {emb.shape}")
+                    # Mini-batch encoding to avoid OOM
+                    all_positive_embeddings = []
+                    all_negative_embeddings = []
 
-                        negative_emb_tensor = self.embedder.encode(negative_texts)
-                        negative_embeddings = [emb.cpu() for emb in negative_emb_tensor]
-                        for emb in negative_embeddings:
-                            if emb.dim() != 1:
-                                raise ValueError(f"Embedder output invalid: {emb.shape}")
+                    # Encode positive texts in mini-batches
+                    if all_positive_texts:
+                        num_pos = len(all_positive_texts)
+                        for start_idx in range(0, num_pos, batch_size):
+                            end_idx = min(start_idx + batch_size, num_pos)
+                            mini_batch = all_positive_texts[start_idx:end_idx]
+            
+                            pos_emb_tensor = self.embedder.encode(mini_batch)
+                            pos_embs = [emb.cpu() for emb in pos_emb_tensor]
+            
+                            for emb in pos_embs:
+                                if emb.dim() != 1:
+                                    raise ValueError(f"Embedder output invalid: {emb.shape}")
+            
+                            all_positive_embeddings.extend(pos_embs)
+                            del pos_emb_tensor, pos_embs
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
 
-                        del positive_emb_tensor, negative_emb_tensor  # Cleanup
+                    # Encode negative texts in mini-batches
+                    if all_negative_texts:
+                        num_neg = len(all_negative_texts)
+                        for start_idx in range(0, num_neg, batch_size):
+                            end_idx = min(start_idx + batch_size, num_neg)
+                            mini_batch = all_negative_texts[start_idx:end_idx]
+            
+                            neg_emb_tensor = self.embedder.encode(mini_batch)
+                            neg_embs = [emb.cpu() for emb in neg_emb_tensor]
+            
+                            for emb in neg_embs:
+                                if emb.dim() != 1:
+                                    raise ValueError(f"Embedder output invalid: {emb.shape}")
+            
+                            all_negative_embeddings.extend(neg_embs)
+                            del neg_emb_tensor, neg_embs
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
 
+                    # Unpack embeddings using metadata
+                    results_by_pos = {pos: {'positive': [None] * len(arbitual_n_gram_memory),
+                                            'negative': [None] * len(arbitual_n_gram_memory)}
+                                      for pos in range(target_length - probe_len + 1)}
+
+                    pos_idx = 0
+                    neg_idx = 0
+                    for probe_pos, group_type, group_idx in metadata_list:
+                        if group_type == 'positive':
+                            results_by_pos[probe_pos]['positive'][group_idx] = all_positive_embeddings[pos_idx]
+                            pos_idx += 1
+                        else:  # negative
+                            results_by_pos[probe_pos]['negative'][group_idx] = all_negative_embeddings[neg_idx]
+                            neg_idx += 1
+
+                    # Populate probe_pos_unit_sets from results_by_pos
+                    for probe_pos in range(target_length - probe_len + 1):
                         probe_pos_unit_sets[str(probe_pos)] = {
-                            "positive_embeddings": positive_embeddings,
-                            "negative_embeddings": negative_embeddings
+                            "positive_embeddings": results_by_pos[probe_pos]['positive'],
+                            "negative_embeddings": results_by_pos[probe_pos]['negative']
                         }
-                    
+    
                     probe_len_unit_sets[str(probe_len)] = {
                         "probe_embedding": probe_embedding,
                         "probe_pos_embeddings": probe_pos_unit_sets

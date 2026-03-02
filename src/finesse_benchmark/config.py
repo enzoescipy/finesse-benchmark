@@ -58,6 +58,8 @@ class OutputConfig(BaseModel):
     sign: bool = Field(default=True)
 
 class BenchmarkConfig(BaseModel):
+    metric: Literal["srs", "rss"] = Field(default="rss", description = "'rss' (default, Robustness to Sequence Scaling) or 'srs' (Sequence Recognition Sensitivity).")
+    formula: Literal["q2q2", "q1q3"] = Field(default="q1q3", description = "q1q3 seperation score for default, q2q2 median comparison for optional selection")
     mode: Literal["merger_mode", "native_mode", "byok_mode"] = Field(default="merger_mode", description="merger_mode, native_mode 또는 byok_mode")
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     probe_config: ProbeConfig = Field(default_factory=ProbeConfig)
