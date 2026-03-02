@@ -86,6 +86,8 @@ def generate_raw_data(
         config.dataset.path = dataset_path
     if num_seed:
         config.seed = num_seed
+    if benchmark_mode:
+        config.metric = benchmark_mode
     
     # Validate sequence lengths - minimum length must be 4 for valid scoring
     sequence_length_min = config.probe_config.sequence_length.min
@@ -222,6 +224,7 @@ def score_embeddings(
     pt_path: str = typer.Option(..., "--pt-path", help="Path to the raw .pt data file from the generate command"),
     output_dir: str = typer.Option("results", "--output", help="Directory to save scored results"),
 ):
+    eval_mode: str = typer.Option("q1q3", "--eval-mode", help="Scoring formula: 'q1q3' (strict, default) or 'q2q2' (permissive, median-based)"),
     """
     Compute scores from raw embeddings data and generate the final benchmark_results.json with notarization.
 
@@ -236,6 +239,8 @@ def score_embeddings(
     Optional Arguments:
     --output: Directory to save benchmark_results.json. Defaults to 'results/'.
               The JSON includes average_rss, length_scores, config, content_hash, and model_hash.
+    --eval-mode: Scoring formula to use. 'q1q3' (default) uses Q1-Q3 gap for strict separation testing.
+                 'q2q2' uses median-median gap for more permissive, directional trend detection.
 
     How Scoring Works:
     For each length (e.g., 4-32 tokens):
@@ -260,12 +265,22 @@ def score_embeddings(
     - For leaderboard submission: Use official config and 25 samples/length for fair comparison.
     - If .pt lacks data: Error will be raised; ensure 'generate' completed successfully.
     """
+
+    # Validate eval_mode
+    if eval_mode not in ['q1q3', 'q2q2']:
+        typer.echo(f"❌ Error: eval_mode must be 'q1q3' or 'q2q2', got '{eval_mode}'")
+        raise typer.Exit(code=1)
+
     if not os.path.exists(pt_path):
         typer.echo(f"Error: Input .pt file not found: {pt_path}")
         raise typer.Exit(code=1)
-    
+
     raw_data = torch.load(pt_path, weights_only=False)
     config_dict = raw_data['config']
+
+    # Assign eval_mode to config.formula for hash consistency
+    config_dict['formula'] = eval_mode
+    typer.echo(f"Using eval_mode: {eval_mode} (assigned to config.formula)")
     metadata = raw_data.get('metadata', {})
     length_results = raw_data.get('raw_results', {}).get('length_results', {})
     
@@ -277,10 +292,10 @@ def score_embeddings(
     mode = config_dict.get('mode')
 
     avg_score = None
-    
+
     if scoring_method == 'srs':
         # Calculate SRS scores using helper
-        srs_data = _calculate_srs_scores(length_results)
+        srs_data = _calculate_srs_scores(length_results, eval_mode=eval_mode)
         length_scores = srs_data['length_scores']
         all_individual_scores = srs_data['all_individual_scores']
 
@@ -296,10 +311,11 @@ def score_embeddings(
             'metadata': metadata  # Includes device_info for hardware provenance from .pt
         }
         typer.echo("Computed SRS scores.")
+
     else:
         # RSS branch
         # Calculate RSS scores using helper
-        rss_data = _calculate_rss_scores(length_results, mode)
+        rss_data = _calculate_rss_scores(length_results, mode, eval_mode=eval_mode)
         length_scores = rss_data['length_scores']
         all_individual_scores = rss_data['all_individual_scores']
         all_total_latencies = rss_data['all_total_latencies']
@@ -987,7 +1003,7 @@ def verify(
         typer.echo(f"❌ Error: {str(e)}")
         raise typer.Exit(code=1)
 
-def _calculate_rss_scores(length_results: Dict[int, Any], mode: str) -> Dict[str, Any]:
+def _calculate_rss_scores(length_results: Dict[int, Any], mode: str, eval_mode: str = 'q1q3') -> Dict[str, Any]:
     """Helper to compute RSS scores for all lengths and samples."""
     length_scores = {}
     all_individual_scores = []
@@ -1005,8 +1021,8 @@ def _calculate_rss_scores(length_results: Dict[int, Any], mode: str) -> Dict[str
             synthesis_embeddings = sample_dict.get('synthesis_embeddings')
 
             if probe_embeddings and synthesis_embeddings and len(probe_embeddings) >= 2:
-                td_scores = calculate_self_attestation_scores(probe_embeddings, synthesis_embeddings)
-                bu_scores = calculate_self_attestation_scores_bottom_up(probe_embeddings, synthesis_embeddings)
+                td_scores = calculate_self_attestation_scores(probe_embeddings, synthesis_embeddings, eval_mode=eval_mode)
+                bu_scores = calculate_self_attestation_scores_bottom_up(probe_embeddings, synthesis_embeddings, eval_mode=eval_mode)
                 
                 avg_td = td_scores['contextual_coherence']
                 avg_bu = bu_scores['bottom_up_coherence']
@@ -1052,8 +1068,7 @@ def _calculate_rss_scores(length_results: Dict[int, Any], mode: str) -> Dict[str
         'all_total_latencies': all_total_latencies,
         'all_synthesis_latencies': all_synthesis_latencies
     }
-
-def _calculate_srs_scores(length_results: Dict[int, Any]) -> Dict[str, Any]:
+def _calculate_srs_scores(length_results: Dict[int, Any], eval_mode: str = 'q1q3') -> Dict[str, Any]:
     """Helper to compute SRS scores while preserving the hierarchical structure.
 
     Transforms the nested embedding structure into a structure of SRS scores:
@@ -1072,7 +1087,6 @@ def _calculate_srs_scores(length_results: Dict[int, Any]) -> Dict[str, Any]:
     """
     length_scores = {}
     all_individual_scores = []
-
     for target_length, raw in length_results.items():
         sample_results = raw.get('sample_results', [])
         processed_samples = []
@@ -1101,7 +1115,7 @@ def _calculate_srs_scores(length_results: Dict[int, Any]) -> Dict[str, Any]:
                     neg_group = pos_data.get('negative_embeddings', [])
 
                     try:
-                        srs_score = calculate_srs_score(probe_embedding, pos_group, neg_group)
+                        srs_score = calculate_srs_score(probe_embedding, pos_group, neg_group, eval_mode=eval_mode)
                         scores_for_probe_len.append(round(srs_score, 6))
                         all_scores_for_sample.append(round(srs_score, 6))
                     except ValueError:

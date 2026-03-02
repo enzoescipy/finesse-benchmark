@@ -7,6 +7,11 @@
 
 # Do NOT modify this file for submissions. Use it as-is for standardized scoring.
 
+# 'rss' (default, Robustness to Sequence Scaling) or 'srs' (Sequence Recognition Sensitivity).
+# 'q1q3' for the most tricky evaluation, 'q2q2' for the more naive evaluation.
+metric: "rss"
+formula: "q1q3"
+
 mode: "merger_mode"  # Options: "merger_mode", "native_mode", or "byok_mode"
 
 # Standard: merger_mode for sequence-merger evaluations. Change only if comparing native/BYOK modes explicitly.
