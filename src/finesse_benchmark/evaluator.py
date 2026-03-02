@@ -442,95 +442,95 @@ class FinesseEvaluator:
 
                     probe_embedding = synthesis_probe_embeddings[probe_len - 2]
 
-                # Collect-Then-Batch: Prepare all sequences for batch synthesis
-                sequences_to_batch = []  # List of (target_length, D) tensors
-                metadata_list = []  # List of (probe_pos, group_type, group_idx)
+                    # Collect-Then-Batch: Prepare all sequences for batch synthesis
+                    sequences_to_batch = []  # List of (target_length, D) tensors
+                    metadata_list = []  # List of (probe_pos, group_type, group_idx)
 
-                for probe_pos in range(target_length - probe_len + 1):  # +1 to include end
-                    # Positive group (forward probe: effective AB order)
-                    for group_idx, positive_n_gram_emb in enumerate(arbitual_n_gram_memory_emb):
-                        crafted_embs = list(positive_n_gram_emb)  # Copy list of (D,) tensors
-                        # Insert reversed to achieve forward order (A then B)
-                        for chunk_emb in reversed(probe_embs_for_len):
-                            crafted_embs.insert(probe_pos, chunk_emb)
-                        # Now crafted_embs has target_length embs
-                        stack_embs = torch.stack(crafted_embs, dim=0)  # (target_length, D)
-                        sequences_to_batch.append(stack_embs)
-                        metadata_list.append((probe_pos, 'positive', group_idx))
+                    for probe_pos in range(target_length - probe_len + 1):  # +1 to include end
+                        # Positive group (forward probe: effective AB order)
+                        for group_idx, positive_n_gram_emb in enumerate(arbitual_n_gram_memory_emb):
+                            crafted_embs = list(positive_n_gram_emb)  # Copy list of (D,) tensors
+                            # Insert reversed to achieve forward order (A then B)
+                            for chunk_emb in reversed(probe_embs_for_len):
+                                crafted_embs.insert(probe_pos, chunk_emb)
+                            # Now crafted_embs has target_length embs
+                            stack_embs = torch.stack(crafted_embs, dim=0)  # (target_length, D)
+                            sequences_to_batch.append(stack_embs)
+                            metadata_list.append((probe_pos, 'positive', group_idx))
 
-                    # Negative group (reverse probe: effective BA order)
-                    for group_idx, negative_n_gram_emb in enumerate(arbitual_n_gram_memory_emb):
-                        crafted_embs = list(negative_n_gram_emb)  # Copy
-                        # Insert in order to achieve reverse (B then A)
-                        for chunk_emb in probe_embs_for_len:
-                            crafted_embs.insert(probe_pos, chunk_emb)
-                        stack_embs = torch.stack(crafted_embs, dim=0)  # (target_length, D)
-                        sequences_to_batch.append(stack_embs)
-                        metadata_list.append((probe_pos, 'negative', group_idx))
+                        # Negative group (reverse probe: effective BA order)
+                        for group_idx, negative_n_gram_emb in enumerate(arbitual_n_gram_memory_emb):
+                            crafted_embs = list(negative_n_gram_emb)  # Copy
+                            # Insert in order to achieve reverse (B then A)
+                            for chunk_emb in probe_embs_for_len:
+                                crafted_embs.insert(probe_pos, chunk_emb)
+                            stack_embs = torch.stack(crafted_embs, dim=0)  # (target_length, D)
+                            sequences_to_batch.append(stack_embs)
+                            metadata_list.append((probe_pos, 'negative', group_idx))
 
-                # Mini-batch synthesis to avoid OOM
-                all_results = []  # List to collect all synthesized embeddings
+                    # Mini-batch synthesis to avoid OOM
+                    all_results = []  # List to collect all synthesized embeddings
 
-                if sequences_to_batch:
-                    num_sequences = len(sequences_to_batch)
-                    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+                    if sequences_to_batch:
+                        num_sequences = len(sequences_to_batch)
+                        device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-                    for start_idx in range(0, num_sequences, batch_size):
-                        end_idx = min(start_idx + batch_size, num_sequences)
-                        mini_batch = sequences_to_batch[start_idx:end_idx]
+                        for start_idx in range(0, num_sequences, batch_size):
+                            end_idx = min(start_idx + batch_size, num_sequences)
+                            mini_batch = sequences_to_batch[start_idx:end_idx]
 
-                        # Stack mini-batch: (mini_batch_size, target_length, D)
-                        batch_tensor = torch.stack(mini_batch, dim=0).to(device)
+                            # Stack mini-batch: (mini_batch_size, target_length, D)
+                            batch_tensor = torch.stack(mini_batch, dim=0).to(device)
 
-                        # Synthesize mini-batch
-                        batch_results = self.synthesizer.synthesize(batch_tensor)  # (mini_batch_size, D)
-                        batch_results_cpu = batch_results.cpu()
+                            # Synthesize mini-batch
+                            batch_results = self.synthesizer.synthesize(batch_tensor)  # (mini_batch_size, D)
+                            batch_results_cpu = batch_results.cpu()
 
-                        # Validate output
-                        if batch_results_cpu.dim() != 2:
-                            raise ValueError(f"Synthesizer batch output invalid: {batch_results_cpu.shape}")
+                            # Validate output
+                            if batch_results_cpu.dim() != 2:
+                                raise ValueError(f"Synthesizer batch output invalid: {batch_results_cpu.shape}")
 
-                        # Collect results
-                        all_results.append(batch_results_cpu)
+                            # Collect results
+                            all_results.append(batch_results_cpu)
 
-                        # Cleanup mini-batch tensors
-                        del batch_tensor, batch_results, batch_results_cpu
-                        if torch.cuda.is_available():
-                            torch.cuda.empty_cache()
+                            # Cleanup mini-batch tensors
+                            del batch_tensor, batch_results, batch_results_cpu
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
 
-                    # Concatenate all mini-batch results
-                    final_results = torch.cat(all_results, dim=0)  # (num_sequences, D)
+                        # Concatenate all mini-batch results
+                        final_results = torch.cat(all_results, dim=0)  # (num_sequences, D)
 
-                    # Unpack results using metadata
-                    results_by_pos = {pos: {'positive': [None] * len(arbitual_n_gram_memory_emb),
-                                            'negative': [None] * len(arbitual_n_gram_memory_emb)}
-                                      for pos in range(target_length - probe_len + 1)}
+                        # Unpack results using metadata
+                        results_by_pos = {pos: {'positive': [None] * len(arbitual_n_gram_memory_emb),
+                                                'negative': [None] * len(arbitual_n_gram_memory_emb)}
+                                        for pos in range(target_length - probe_len + 1)}
 
-                    for idx, (probe_pos, group_type, group_idx) in enumerate(metadata_list):
-                        group_member_emb = final_results[idx]
-                        if group_member_emb.dim() != 1:
-                            raise ValueError(f"Synthesizer output invalid: {group_member_emb.shape}")
-                        results_by_pos[probe_pos][group_type][group_idx] = group_member_emb
+                        for idx, (probe_pos, group_type, group_idx) in enumerate(metadata_list):
+                            group_member_emb = final_results[idx]
+                            if group_member_emb.dim() != 1:
+                                raise ValueError(f"Synthesizer output invalid: {group_member_emb.shape}")
+                            results_by_pos[probe_pos][group_type][group_idx] = group_member_emb
 
-                    # Cleanup final results
-                    del final_results, all_results
-    
-                    # Populate probe_pos_unit_sets from results_by_pos
-                    for probe_pos in range(target_length - probe_len + 1):
-                        probe_pos_unit_sets[str(probe_pos)] = {
-                            "positive_embeddings": results_by_pos[probe_pos]['positive'],
-                            "negative_embeddings": results_by_pos[probe_pos]['negative']
-                        }
-    
-                    probe_len_unit_sets[str(probe_len)] = {
-                        "probe_embedding": probe_embedding,
-                        "probe_pos_embeddings": probe_pos_unit_sets
-                    }   
+                        # Cleanup final results
+                        del final_results, all_results
+        
+                        # Populate probe_pos_unit_sets from results_by_pos
+                        for probe_pos in range(target_length - probe_len + 1):
+                            probe_pos_unit_sets[str(probe_pos)] = {
+                                "positive_embeddings": results_by_pos[probe_pos]['positive'],
+                                "negative_embeddings": results_by_pos[probe_pos]['negative']
+                            }
+        
+                        probe_len_unit_sets[str(probe_len)] = {
+                            "probe_embedding": probe_embedding,
+                            "probe_pos_embeddings": probe_pos_unit_sets
+                        }   
 
-                    # Hierarchical Data Inheritance: pop the last emb from each n-gram
-                    for n_gram_emb in arbitual_n_gram_memory_emb:
-                        if len(n_gram_emb) > 1:
-                            n_gram_emb.pop()  # Remove last, now smaller for next probe_len
+                        # Hierarchical Data Inheritance: pop the last emb from each n-gram
+                        for n_gram_emb in arbitual_n_gram_memory_emb:
+                            if len(n_gram_emb) > 1:
+                                n_gram_emb.pop()  # Remove last, now smaller for next probe_len
                 
                 # Sample result
                 sample_dict = probe_len_unit_sets
