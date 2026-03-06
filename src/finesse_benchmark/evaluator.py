@@ -318,7 +318,7 @@ class FinesseEvaluator:
 
         return self._package_metadata_data(length_results=length_results, scoring_name='rss')
 
-    def merger_run_srs(self, batch_size = 64) -> Dict[str, Any]:
+    def merger_run_srs(self) -> Dict[str, Any]:
         """Finesse 벤치마크 실행: Stratified CSAT with Single-Pass Conveyor Belt (Raw mode - embeddings only)"""
         # Load dataset with specific revision for declarative reproducibility
         dataset = self._dataset_prepare_and_validate()
@@ -327,6 +327,8 @@ class FinesseEvaluator:
         # find min, max length
         min_length, max_length = self.config.probe_config.sequence_length.min, self.config.probe_config.sequence_length.max
 
+        # Find batch size
+        batch_size = self.config.advanced.get("batch_size", 8)
 
         # Warm-up phase: Initialize models with dummy data to avoid cold-start latency
         dummy_samples = [
@@ -557,7 +559,7 @@ class FinesseEvaluator:
 
         return self._package_metadata_data(length_results=length_results, scoring_name='srs')
 
-    def native_run_srs(self, batch_size = 64) -> Dict[str, Any]:
+    def native_run_srs(self) -> Dict[str, Any]:
         """Finesse 벤치마크 실행: Stratified CSAT with Single-Pass Conveyor Belt (Raw mode - embeddings only) - Native Mode"""
         # Load dataset with specific revision for declarative reproducibility
         dataset = self._dataset_prepare_and_validate()
@@ -568,6 +570,9 @@ class FinesseEvaluator:
 
         # Find ctx
         max_ctx = self.config.models.native_embedder.max_context_length
+
+        # Find batch size
+        batch_size = self.config.advanced.get("batch_size", 8)
 
         # Warm-up phase: Initialize embedder with dummy data to avoid cold-start latency (no synthesizer in native mode)
         dummy_samples = [
