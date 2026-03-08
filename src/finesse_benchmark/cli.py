@@ -22,10 +22,7 @@ app = typer.Typer(no_args_is_help=True)
 @app.command("generate")
 def generate_raw_data(
     config_path: str = typer.Option(..., "--config", help="Path to benchmark.yaml config file"),
-    dataset_path: Optional[str] = typer.Option(None, help="Override HF dataset path"),
     output_dir: str = typer.Option("results", "--output", help="Directory to save raw embedding data"),
-    num_seed: Optional[int] = typer.Option(None, "--seed", help="Random seed for dataset shuffling reproducibility"),
-    benchmark_mode: str = typer.Option("rss", "--mode", help="Benchmark type: 'rss' (default, Robustness to Sequence Scaling) or 'srs' (Sequence Recognition Sensitivity)."),
 ):
     """
     Generate raw embeddings from the Finesse benchmark dataset.
@@ -81,13 +78,6 @@ def generate_raw_data(
         typer.echo(f"Error validating config: {e}")
         raise typer.Exit(code=1)
     
-    # Override if provided
-    if dataset_path:
-        config.dataset.path = dataset_path
-    if num_seed:
-        config.seed = num_seed
-    if benchmark_mode:
-        config.metric = benchmark_mode
     
     # Validate sequence lengths - minimum length must be 4 for valid scoring
     sequence_length_min = config.probe_config.sequence_length.min
@@ -193,6 +183,7 @@ def generate_raw_data(
 
     # Run raw evaluation
     typer.echo("Generating raw embeddings...")
+    typer.echo(f"mode={config.metric}")
     raw_data = None
     if config.metric == "srs":
         if config.mode == "merger_mode":
