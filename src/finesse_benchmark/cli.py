@@ -224,7 +224,6 @@ def score_embeddings(
     pt_path: str = typer.Option(..., "--pt-path", help="Path to the raw .pt data file from the generate command"),
     output_dir: str = typer.Option("results", "--output", help="Directory to save scored results"),
 ):
-    eval_mode: str = typer.Option("q1q3", "--eval-mode", help="Scoring formula: 'q1q3' (strict, default) or 'q2q2' (permissive, median-based)"),
     """
     Compute scores from raw embeddings data and generate the final benchmark_results.json with notarization.
 
@@ -266,11 +265,6 @@ def score_embeddings(
     - If .pt lacks data: Error will be raised; ensure 'generate' completed successfully.
     """
 
-    # Validate eval_mode
-    if eval_mode not in ['q1q3', 'q2q2']:
-        typer.echo(f"❌ Error: eval_mode must be 'q1q3' or 'q2q2', got '{eval_mode}'")
-        raise typer.Exit(code=1)
-
     if not os.path.exists(pt_path):
         typer.echo(f"Error: Input .pt file not found: {pt_path}")
         raise typer.Exit(code=1)
@@ -279,7 +273,7 @@ def score_embeddings(
     config_dict = raw_data['config']
 
     # Assign eval_mode to config.formula for hash consistency
-    config_dict['formula'] = eval_mode
+    eval_mode = config_dict['formula']
     typer.echo(f"Using eval_mode: {eval_mode} (assigned to config.formula)")
     metadata = raw_data.get('metadata', {})
     length_results = raw_data.get('raw_results', {}).get('length_results', {})
