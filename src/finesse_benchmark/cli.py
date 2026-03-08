@@ -194,7 +194,7 @@ def generate_raw_data(
     # Run raw evaluation
     typer.echo("Generating raw embeddings...")
     raw_data = None
-    if benchmark_mode == "srs":
+    if config.metric == "srs":
         if config.mode == "merger_mode":
             raw_data = evaluator.merger_run_srs()
             typer.echo("  Running merger_run_srs for SRS benchmark.")
@@ -211,7 +211,7 @@ def generate_raw_data(
     
     # Save full raw data (config + raw_results) to .pt file
     dataset_name = config.dataset.path.split('/')[-1]
-    save_path = os.path.join(output_dir, f"embeddings_{config.mode}_{benchmark_mode}_{dataset_name}.pt")
+    save_path = os.path.join(output_dir, f"embeddings_{config.mode}_{config.metric}_{dataset_name}.pt")
     torch.save(raw_data, save_path)
     
     typer.echo(f"Raw data (with config) saved to {save_path}")
