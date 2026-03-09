@@ -9,7 +9,8 @@ import tiktoken
 import warnings
 from transformers import AutoTokenizer
 import importlib.metadata
-import cpuinfo 
+import cpuinfo
+from tqdm import tqdm
 
 from .config import BenchmarkConfig
 from .scoring import calculate_self_attestation_scores, calculate_self_attestation_scores_bottom_up
@@ -191,6 +192,7 @@ class FinesseEvaluator:
                 }
                 sample_results.append(sample_dict)
 
+            pbar_samples.close()
             # 이 길이에 대한 결과 저장
             length_results[target_length] = {
                 'sample_results': sample_results,
@@ -232,7 +234,7 @@ class FinesseEvaluator:
 
         length_results = {}  # 길이별 결과 저장: {'sample_results': [dicts], 'num_synth_steps': N}
 
-        for target_length in range(min_length, max_length + 1):
+        for target_length in tqdm(range(min_length, max_length + 1), desc="SRS Bench: Probing Lengths"):
             typer.echo(f"probe sequence [{target_length}] in progress ...")
             
             sample_results = []  # List of 25 dicts per length
@@ -355,13 +357,11 @@ class FinesseEvaluator:
 
         for target_length in range(min_length, max_length + 1):
             typer.echo(f"probe sequence [{target_length}] in progress ...")
-            
             sample_results = []  # List of 25 dicts per length
-
+            pbar_samples = tqdm(total=self.config.probe_config.samples_per_length, desc=f"L={target_length} Samples", leave=False)
             # target_length 개의 청크로 구성된 시퀀스를 samples_per_length번 테스트
             while len(sample_results) < self.config.probe_config.samples_per_length:
-                typer.echo(f"probe sequence [{target_length}] in progress ({len(sample_results)}/{self.config.probe_config.samples_per_length})...")
-                
+                typer.echo(f"probe sequence [{target_length}] in progress ({len(sample_results)}/{self.config.probe_config.samples_per_length})...")                
                 # testing probe chunks yield
                 test_probe_chunks = self._get_text_chunck_from_database(target_length=target_length - 1, dataset=dataset, iterator=iterator)
                 
@@ -451,7 +451,7 @@ class FinesseEvaluator:
 
                 # result dict creation
                 probe_len_unit_sets = {}
-                for probe_len in range(2, target_length):
+                for probe_len in tqdm(range(2, target_length), desc=f"  L={target_length}, Smp {len(sample_results)+1}: Probing", leave=False):
                     probe_embs_for_len = probe_chunk_embeddings[0:probe_len]  # Embs for this probe_len prefix
                     probe_pos_unit_sets = {}
 
@@ -490,7 +490,7 @@ class FinesseEvaluator:
                         num_sequences = len(sequences_to_batch)
                         device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-                        for start_idx in range(0, num_sequences, batch_size):
+                        for start_idx in tqdm(range(0, num_sequences, batch_size), desc=f"    L={target_length}, Prb {probe_len}: Synthesizing", leave=False, unit="batch"):
                             end_idx = min(start_idx + batch_size, num_sequences)
                             mini_batch = sequences_to_batch[start_idx:end_idx]
 
@@ -546,10 +546,11 @@ class FinesseEvaluator:
                         for n_gram_emb in arbitual_n_gram_memory_emb:
                             if len(n_gram_emb) > 1:
                                 n_gram_emb.pop()  # Remove last, now smaller for next probe_len
-                
+
                 # Sample result
                 sample_dict = probe_len_unit_sets
                 sample_results.append(sample_dict)
+                pbar_samples.update(1)
 
             # 이 길이에 대한 결과 저장
             length_results[target_length] = {
@@ -582,8 +583,7 @@ class FinesseEvaluator:
         _ = self.embedder.encode(dummy_samples)
 
         length_results = {}  # 길이별 결과 저장: {'sample_results': [dicts], 'num_synth_steps': N}
-
-        for target_length in range(min_length, max_length + 1):
+        for target_length in tqdm(range(min_length, max_length + 1), desc="Native SRS: Probing Lengths"):
             # Pre-length check: Estimate if feasible
             estimated_tokens = target_length * self.config.probe_config.token_per_sample + 100  # +overhead for joins/spaces
             skip_length = False
@@ -603,6 +603,7 @@ class FinesseEvaluator:
             typer.echo(f"probe sequence [{target_length}] in progress ...")
             
             sample_results = []  # List of 25 dicts per length
+            pbar_samples = tqdm(total=self.config.probe_config.samples_per_length, desc=f"L={target_length} Samples", leave=False)
 
             # target_length 개의 청크로 구성된 시퀀스를 samples_per_length번 테스트
             while len(sample_results) < self.config.probe_config.samples_per_length:
@@ -660,7 +661,7 @@ class FinesseEvaluator:
 
                 # result dict creation
                 probe_len_unit_sets = {}
-                for probe_len in range(2, target_length):
+                for probe_len in tqdm(range(2, target_length), desc=f"  L={target_length}, Smp {len(sample_results)+1}: Probing", leave=False):
                     probe_texts_for_len = test_probe_chunks[0:probe_len]  # Strs for this probe_len prefix
                     probe_pos_unit_sets = {}
 
@@ -699,7 +700,7 @@ class FinesseEvaluator:
                     # Encode positive texts in mini-batches
                     if all_positive_texts:
                         num_pos = len(all_positive_texts)
-                        for start_idx in range(0, num_pos, batch_size):
+                        for start_idx in tqdm(range(0, num_pos, batch_size), desc=f"    L={target_length}, Prb {probe_len}: Synthesizing Pos", leave=False, unit="batch"):
                             end_idx = min(start_idx + batch_size, num_pos)
                             mini_batch = all_positive_texts[start_idx:end_idx]
             
@@ -714,11 +715,10 @@ class FinesseEvaluator:
                             del pos_emb_tensor, pos_embs
                             if torch.cuda.is_available():
                                 torch.cuda.empty_cache()
-
                     # Encode negative texts in mini-batches
                     if all_negative_texts:
                         num_neg = len(all_negative_texts)
-                        for start_idx in range(0, num_neg, batch_size):
+                        for start_idx in tqdm(range(0, num_neg, batch_size), desc=f"    L={target_length}, Prb {probe_len}: Synthesizing Neg", leave=False, unit="batch"):
                             end_idx = min(start_idx + batch_size, num_neg)
                             mini_batch = all_negative_texts[start_idx:end_idx]
             
@@ -765,11 +765,13 @@ class FinesseEvaluator:
                     for n_gram in arbitual_n_gram_memory:
                         if len(n_gram) > 1:
                             n_gram.pop()  # Remove last, now smaller for next probe_len
-                
+
                 # Sample result
                 sample_dict = probe_len_unit_sets
                 sample_results.append(sample_dict)
+                pbar_samples.update(1)
 
+            pbar_samples.close()
             # 이 길이에 대한 결과 저장
             length_results[target_length] = {
                 'sample_results': sample_results,

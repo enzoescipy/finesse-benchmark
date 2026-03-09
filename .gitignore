@@ -10,3 +10,4 @@ inspect_plots/
 results/
 benchmark.yaml
 my_model.py
+finesse_benchmark.egg-info/
