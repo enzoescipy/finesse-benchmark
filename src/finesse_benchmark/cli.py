@@ -1019,8 +1019,7 @@ def _calculate_rss_scores(length_results: Dict[int, Any], mode: str, eval_mode: 
                 
                 avg_td = td_scores['contextual_coherence']
                 avg_bu = bu_scores['bottom_up_coherence']
-                imbalance = abs(avg_td - avg_bu)
-                final_score = ((avg_td + avg_bu) / 2) - imbalance
+                final_score = avg_td + avg_bu
                 sample_scores.append(final_score)
             else:
                 sample_scores.append(0.0)
