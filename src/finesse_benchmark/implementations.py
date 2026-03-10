@@ -263,6 +263,8 @@ class HuggingFaceSynthesizer(FinesseSynthesizer):
                     synth_emb = hidden_states.mean(dim=1)
                 elif self.pool_type == "last":
                     synth_emb = hidden_states[:, -1]
+                elif self.pool_type == "pooler":
+                    synth_emb = outputs.pooler_output        
                 else:
                     raise ValueError(f"Unknown pool_type: {self.pool_type}")
             else:

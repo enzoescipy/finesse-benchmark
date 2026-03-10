@@ -99,7 +99,7 @@ class FinesseEvaluator:
 
         length_results = {}  # 길이별 결과 저장: {'sample_results': [dicts], 'num_synth_steps': N}
 
-        for target_length in range(min_length, max_length + 1):
+        for target_length in tqdm(range(min_length, max_length + 1), desc="Native RSS: Probing Lengths"):
             # Pre-length check: Estimate if feasible
             estimated_tokens = target_length * self.config.probe_config.token_per_sample + 100  # +overhead for joins/spaces
             skip_length = False
@@ -117,11 +117,13 @@ class FinesseEvaluator:
                 continue
 
             typer.echo(f"probe sequence [{target_length}] in progress ...")
-            
+
             sample_results = []  
             attempts = 0
-            max_attempts = len(dataset)  # 데이터셋 전체를 최대 시도 횟수로
-            
+            max_attempts = len(dataset)  # 데이터셋 전체를 최대 시도 횟수
+
+            pbar_samples = tqdm(total=self.config.probe_config.samples_per_length, desc=f"L={target_length} Samples", leave=False)
+
             # target_length 개의 청크로 구성된 시퀀스를 samples_per_length번 테스트
             while len(sample_results) < self.config.probe_config.samples_per_length:
                 attempts += 1
@@ -184,6 +186,7 @@ class FinesseEvaluator:
                     del synth_emb_tensor
 
                 # 샘플 결과 저장
+
                 sample_dict = {
                     'chunk_embeddings': chunk_embeddings,
                     'synthesis_embeddings': synthesis_embeddings,
@@ -191,6 +194,9 @@ class FinesseEvaluator:
                     'synth_times': synth_times
                 }
                 sample_results.append(sample_dict)
+                pbar_samples.update(1)
+
+            pbar_samples.close()
 
             # 이 길이에 대한 결과 저장
             length_results[target_length] = {
@@ -233,7 +239,7 @@ class FinesseEvaluator:
 
         length_results = {}  # 길이별 결과 저장: {'sample_results': [dicts], 'num_synth_steps': N}
 
-        for target_length in tqdm(range(min_length, max_length + 1), desc="SRS Bench: Probing Lengths"):
+        for target_length in tqdm(range(min_length, max_length + 1), desc="Merger RSS: Probing Lengths"):
             typer.echo(f"probe sequence [{target_length}] in progress ...")
             
             sample_results = []  # List of 25 dicts per length
@@ -450,7 +456,7 @@ class FinesseEvaluator:
 
                 # result dict creation
                 probe_len_unit_sets = {}
-                for probe_len in tqdm(range(2, target_length), desc=f"  L={target_length}, Smp {len(sample_results)+1}: Probing", leave=False):
+                for probe_len in tqdm(range(2, target_length), desc=f"Merger SRS  L={target_length}, Smp {len(sample_results)+1}: Probing", leave=False):
                     probe_embs_for_len = probe_chunk_embeddings[0:probe_len]  # Embs for this probe_len prefix
                     probe_pos_unit_sets = {}
 
@@ -489,7 +495,7 @@ class FinesseEvaluator:
                         num_sequences = len(sequences_to_batch)
                         device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-                        for start_idx in tqdm(range(0, num_sequences, batch_size), desc=f"    L={target_length}, Prb {probe_len}: Synthesizing", leave=False, unit="batch"):
+                        for start_idx in tqdm(range(0, num_sequences, batch_size), desc=f"Merger SRS    L={target_length}, Prb {probe_len}: Synthesizing", leave=False, unit="batch"):
                             end_idx = min(start_idx + batch_size, num_sequences)
                             mini_batch = sequences_to_batch[start_idx:end_idx]
 

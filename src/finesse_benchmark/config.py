@@ -16,7 +16,7 @@ class SequenceLengthConfig(BaseModel):
 class AutoModelSelector(BaseModel):
     """hf 모델 설정"""
     name: str = Field(..., description="모델 카드 이름")
-    pool_type: Literal["cls", "mean", "last"] = Field(..., description="The pooling strategy to use ('cls', 'mean', or 'last'). This is now a required field.")
+    pool_type: Literal["cls", "mean", "last", "pooler"] = Field(..., description="The pooling strategy to use ('cls', 'mean', or 'last'). This is now a required field.")
     prefix: Optional[str] = Field(default=None, description="임베딩 전 텍스트에 추가할 접두사 (e.g., 'passage: ' for E5 models)")
 
     max_context_length: Optional[int] = Field(default=None, description="모델의 최대 컨텍스트 길이 (토크나이저 수). 자격 심사를 위해 사용됩니다.")
@@ -33,7 +33,7 @@ class LocalModelSelector(BaseModel):
     """로컬 파이썬 파일에서 직접 모델 클래스를 로드하기 위한 설정"""
     local_path: str = Field(..., description="모델 클래스가 정의된 .py 파일의 경로")
     local_class: str = Field(..., description="로드할 클래스의 이름")
-    pool_type: Literal["cls", "mean", "last"] = Field(..., description="The pooling strategy to use ('cls', 'mean', or 'last'). This is now a required field.")
+    pool_type: Literal["cls", "mean", "last", "pooler"] = Field(..., description="The pooling strategy to use ('cls', 'mean', or 'last'). This is now a required field.")
     max_context_length: Optional[int] = Field(default=None, description="모델의 최대 컨텍스트 길이 (토크나이저 수). 자격 심사를 위해 사용됩니다.")
 
 class ProbeConfig(BaseModel):

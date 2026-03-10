@@ -21,7 +21,7 @@ models:
   # Sequence Merger (core for merger_mode)
   merger:
     name: "enzoescipy/sequence-merger-malgeum"  # Official merger model; use your fine-tuned variant if submitting custom
-    pool_type: "mean"  # mean pooling. one of 'cls', 'mean', 'last'.
+    pool_type: "pooler"  # mean pooling. one of 'cls', 'mean', 'last', 'pooler'.
   # Base Embedder (used in merger_mode and as probe embedder)
   base_embedder:
     name: "intfloat/multilingual-e5-base"  # Standard multilingual base for global coverage
