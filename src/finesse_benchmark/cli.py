@@ -125,7 +125,7 @@ def generate_raw_data(
             synthesizer = load_local_engine(merger_config)
             typer.echo(f"  Synthesizer: Local - {merger_config.local_path}::{merger_config.local_class}")
         else:
-            synthesizer = HuggingFaceSynthesizer(merger_config.name)
+            synthesizer = HuggingFaceSynthesizer(merger_config.name, merger_config.pool_type)
             typer.echo(f"  Synthesizer: {merger_config.name}")
         
         # Load embedder (base)
@@ -136,20 +136,22 @@ def generate_raw_data(
             embedder = HuggingFaceEmbedder(
                 embedder_config.name, 
                 prefix=embedder_config.prefix,
+                pool_type=embedder_config.pool_type,
                 max_length=embedder_config.max_context_length
             )
             typer.echo(f"  Embedder: {embedder_config.name}")
-    
+
     elif config.mode == 'native_mode':
         typer.echo("  Mode: native_mode")
         embedder_config = config.models.native_embedder
-        
+
         if isinstance(embedder_config, LocalModelSelector):
             embedder = load_local_engine(embedder_config)
             typer.echo(f"  Embedder: Local - {embedder_config.local_path}::{embedder_config.local_class}")
         else:
             embedder = HuggingFaceEmbedder(
                 embedder_config.name,
+                pool_type=embedder_config.pool_type,
                 prefix=embedder_config.prefix,
                 max_length=embedder_config.max_context_length
             )
@@ -157,21 +159,22 @@ def generate_raw_data(
         
         synthesizer = NullSynthesizer()
         typer.echo("  Synthesizer: pass-through")
-    
+
     elif config.mode == 'byok_mode':
         typer.echo("  Mode: byok_mode")
         if not config.models.byok_embedder:
             typer.echo("❌ Error: BYOK mode requires 'models.byok_embedder' configuration.")
             raise typer.Exit(code=1)
-        
+    
         # Use BYOK embedder for embedding and pass-through for synthesis
+        byok_cfg = config.models.byok_embedder
         embedder = ByokEmbedder(
-            provider=config.models.byok_embedder.provider,
-            model_name=config.models.byok_embedder.name,
-            tokenizer_path=config.models.byok_embedder.tokenizer_path
+            provider=byok_cfg.provider,
+            model_name=byok_cfg.name,
+            tokenizer_path=byok_cfg.tokenizer_path
         )
-        synthesizer = NullSynthesizer()
-        typer.echo(f"  Embedder: {config.models.byok_embedder.provider}/{config.models.byok_embedder.name}")
+        synthesizer = NullSynthesizer(pool_type=byok_cfg.pool_type)
+        typer.echo(f"  Embedder: {byok_cfg.provider}/{byok_cfg.name}")
         typer.echo("  Synthesizer: pass-through")
     
     else:

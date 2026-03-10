@@ -192,7 +192,6 @@ class FinesseEvaluator:
                 }
                 sample_results.append(sample_dict)
 
-            pbar_samples.close()
             # 이 길이에 대한 결과 저장
             length_results[target_length] = {
                 'sample_results': sample_results,

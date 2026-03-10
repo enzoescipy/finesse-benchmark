@@ -21,11 +21,13 @@ models:
   # Sequence Merger (core for merger_mode)
   merger:
     name: "enzoescipy/sequence-merger-malgeum"  # Official merger model; use your fine-tuned variant if submitting custom
+    pool_type: "mean"  # mean pooling. one of 'cls', 'mean', 'last'.
   # Base Embedder (used in merger_mode and as probe embedder)
   base_embedder:
     name: "intfloat/multilingual-e5-base"  # Standard multilingual base for global coverage
     max_context_length: 512 
     prefix: "passage: "
+    pool_type: "mean"  # mean pooling. one of 'cls', 'mean', 'last'.
   # IMPORTANT: max_context_length Field Explanation (for all embedder types: base, native, byok)
   #
   # This optional field specifies the model's official maximum context length in tokens.
@@ -51,6 +53,7 @@ models:
     name: "Snowflake/snowflake-arctic-embed-l-v2.0"
     max_context_length: 8192  # Automatic skip for sequences exceeding this (e.g., >32 chunks at 256 tokens each)
     prefix: "" # no prefix for passage model
+    pool_type: "cls" # cls pooling. one of 'cls', 'mean', 'last'.
 
   # [Local Python Class Example - Uncomment and edit for custom model classes]
   # Load a model class directly from a local Python file instead of Hugging Face Hub.

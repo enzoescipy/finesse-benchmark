@@ -16,12 +16,14 @@ models:
   merger:
     # Hugging Face model name or local path for Sequence Merger
     name: "enzoescipy/sequence-merger-malgeum"
+    pool_type: "mean"  # mean pooling. one of 'cls', 'mean', 'last'.
   # merger_mode: base embedder for probes, native_mode: the main long-context embedder
   base_embedder:
     # e.g., multilingual-e5-base for merger, or longformer-base-4096 for native
     name: "intfloat/multilingual-e5-base"
     max_context_length: 512 # Automatic check in merger_mode: ensures token_per_sample <= this limit
     prefix: "passage: "
+    pool_type: "mean"  # mean pooling. one of 'cls', 'mean', 'last'.
   # IMPORTANT: max_context_length Field Explanation (for all embedder types: base, native, byok)
   #
   # This optional field specifies the model's official maximum context length in tokens.
@@ -47,6 +49,7 @@ models:
     name: "Snowflake/snowflake-arctic-embed-l-v2.0"
     max_context_length: 8192  # Automatic skip for sequences exceeding this (e.g., >32 chunks at 256 tokens each)
     prefix: "" # no prefix for passage model
+    pool_type: "cls" # cls pooling. one of 'cls', 'mean', 'last'.
   # [Local Python Class Example - Uncomment and edit for custom model classes]
   # Load a model class directly from a local Python file instead of Hugging Face Hub.
   # This is useful for custom implementations, research prototypes, or models not published to HF.
@@ -56,6 +59,7 @@ models:
   #   local_path: "final_result/average-build/modeling_average.py"  # Path to the .py file containing the class
   #   local_class: "AverageModel"  # Name of the class to instantiate
   #   max_context_length: 512  # CRITICAL: Set the model's official maximum context length
+  #   pool_type: "cls" # cls pooling. one of 'cls', 'mean', 'last'.
   #
   # Requirements for the local class:
   # - Must inherit from FinesseSynthesizer (for merger) or FinesseEmbedder (for embedder)
