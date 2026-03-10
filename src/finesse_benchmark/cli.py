@@ -284,6 +284,10 @@ def score_embeddings(
         length_scores = srs_data['length_scores']
         all_individual_scores = srs_data['all_individual_scores']
 
+        # Calculate PBI
+        average_pbi = _calculate_pbi(length_scores)
+        typer.echo(f"Computed PBI: {average_pbi}")
+
         # Averages (no latencies for SRS)
         avg_srs = np.mean(all_individual_scores) if all_individual_scores else 0.0
         avg_srs = round(avg_srs, 6)
@@ -292,6 +296,7 @@ def score_embeddings(
         base_results = {
             'config': config_dict,
             'average_srs': avg_srs,
+            'average_pbi': average_pbi,
             'length_scores': length_scores,
             'metadata': metadata  # Includes device_info for hardware provenance from .pt
         }
@@ -1100,9 +1105,9 @@ def _calculate_srs_scores(length_results: Dict[int, Any], eval_mode: str = 'q1q3
                     neg_group = pos_data.get('negative_embeddings', [])
 
                     try:
-                        srs_score = calculate_srs_score(probe_embedding, pos_group, neg_group, eval_mode=eval_mode)
-                        scores_for_probe_len.append(round(srs_score, 6))
-                        all_scores_for_sample.append(round(srs_score, 6))
+                        srs_score = round(calculate_srs_score(probe_embedding, pos_group, neg_group, eval_mode=eval_mode) * 1000, 6)
+                        scores_for_probe_len.append(srs_score)
+                        all_scores_for_sample.append(srs_score)
                     except ValueError:
                         scores_for_probe_len.append(0.0)
                         all_scores_for_sample.append(0.0)
@@ -1111,7 +1116,6 @@ def _calculate_srs_scores(length_results: Dict[int, Any], eval_mode: str = 'q1q3
 
             processed_samples.append(new_sample)
             all_individual_scores.extend(all_scores_for_sample)
-
         length_scores[target_length] = {
             'sample_results': processed_samples
         }
@@ -1121,5 +1125,46 @@ def _calculate_srs_scores(length_results: Dict[int, Any], eval_mode: str = 'q1q3
         'all_individual_scores': all_individual_scores
     }
 
+def _calculate_pbi(length_scores: Dict[int, Any]) -> float:
+    """Calculate Position Bias Index (PBI) for SRS scores.
+    
+    PBI = mean(StdDev of scores per position for each probe_length) where probe_length <= L/2.
+    """
+    all_probe_std_devs = []
+    
+    for target_length_str, length_data in length_scores.items():
+        target_length = int(target_length_str)
+        max_probe_len = target_length // 2
+        sample_results = length_data.get('sample_results', [])
+        
+        if not sample_results:
+            continue
+            
+        # Aggregate scores across all samples for each probe_length and position
+        # Structure: probe_len -> [list of scores per position across all samples]
+        probe_len_aggregated = {}
+        
+        for sample in sample_results:
+            for probe_len_str, pos_scores in sample.items():
+                probe_len = int(probe_len_str)
+                if probe_len > max_probe_len:
+                    continue
+                    
+                if probe_len not in probe_len_aggregated:
+                    probe_len_aggregated[probe_len] = []
+                    
+                # pos_scores is a list of scores for different positions
+                # We need to collect all positions' scores
+                probe_len_aggregated[probe_len].extend(pos_scores)
+        
+        # For each probe_len, compute the std dev of the aggregated position scores
+        for probe_len, all_pos_scores in probe_len_aggregated.items():
+            if len(all_pos_scores) > 1:
+                std_dev = np.std(all_pos_scores)
+                all_probe_std_devs.append(std_dev)
+    
+    if all_probe_std_devs:
+        return round(np.mean(all_probe_std_devs), 6)
+    return 0.0
 if __name__ == "__main__":
     app()
