@@ -36,40 +36,58 @@ class HuggingFaceEmbedder(FinesseEmbedder):
             trust_remote_code=True,
             dtype=self.dtype
         ).to(self.device).eval()
-    
+
     def encode(self, texts: list[str]) -> torch.Tensor:
         """텍스트 리스트를 임베딩하여 반환한다."""
         # Add prefix if specified
         input_texts = [self.prefix + text for text in texts]
-        
-        # Tokenize
-        inputs = self.tokenizer(
-            input_texts,
-            max_length=self.max_length,
-            padding=True,
-            truncation=True,
-            return_tensors="pt"
-        ).to(self.device)
 
-        # Get embeddings with configurable pooling
         with torch.no_grad():
-            outputs = self.model(**inputs)
-            hidden_states = outputs.last_hidden_state
-            
-            if self.pool_type == "cls":
-                embeddings = hidden_states[:, 0]
-            elif self.pool_type == "mean":
-                # Masked mean pooling
-                mask = inputs["attention_mask"].unsqueeze(-1).float()
-                embeddings = (hidden_states * mask).sum(1) / mask.sum(1).clamp(1e-9)
-            elif self.pool_type == "last":
-                # Get last non-padded token for each sequence
+            if self.pool_type == "last":
+                # Tokenize for last-token pooling, ensuring EOS token is always present
+                batch_dict = self.tokenizer(
+                    input_texts,
+                    max_length=self.max_length - 1,
+                    return_attention_mask=False,
+                    padding=False,
+                    truncation=True,
+                )
+                batch_dict['input_ids'] = [
+                    ids + [self.tokenizer.eos_token_id] for ids in batch_dict['input_ids']
+                ]
+                inputs = self.tokenizer.pad(
+                    batch_dict,
+                    padding=True,
+                    return_attention_mask=True,
+                    return_tensors='pt',
+                ).to(self.device)
+
+                outputs = self.model(**inputs)
+                hidden_states = outputs.last_hidden_state
                 mask = inputs["attention_mask"]
                 seq_lengths = mask.sum(dim=1) - 1
                 embeddings = hidden_states[torch.arange(hidden_states.size(0)), seq_lengths]
-            else:
-                raise ValueError(f"Unknown pool_type: {self.pool_type}")
-        
+
+            else: # For 'cls' and 'mean' pooling
+                inputs = self.tokenizer(
+                    input_texts,
+                    max_length=self.max_length,
+                    padding=True,
+                    truncation=True,
+                    return_tensors="pt"
+                ).to(self.device)
+
+                outputs = self.model(**inputs)
+                hidden_states = outputs.last_hidden_state
+            
+                if self.pool_type == "cls":
+                    embeddings = hidden_states[:, 0]
+                elif self.pool_type == "mean":
+                    mask = inputs["attention_mask"].unsqueeze(-1).float()
+                    embeddings = (hidden_states * mask).sum(1) / mask.sum(1).clamp(1e-9)
+                else:
+                    raise ValueError(f"Unknown or unsupported pool_type for this path: {self.pool_type}")
+
         # Normalize
         embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
         return embeddings
