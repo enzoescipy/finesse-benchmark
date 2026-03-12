@@ -55,6 +55,8 @@ class DatasetConfig(BaseModel):
     split: str = Field(..., description="데이터셋 스플릿 (e.g., 'train', 'test')")
     text_column: str = Field(..., description="The name of the column containing the main text content.")
     commit_hash: str = Field(..., description="Hugging Face 데이터셋의 revision/commit_hash. 재현성을 위해 필수.")
+    data_dir: Optional[str] = Field(default=None, description="Specific data files to load (e.g., 'en'). Allows loading a subset of a large dataset.")
+    data_files: Optional[str] = Field(default=None, description="Specific data files to load (e.g., '- en/c4-train.0000*-of-01024.json.gz'). Allows loading a subset of a large dataset. Overwrites the data_dir setting.")
 
 class OutputConfig(BaseModel):
     format: str = Field(default="json")

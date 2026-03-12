@@ -678,9 +678,12 @@ class FinesseEvaluator:
                     n_gram = n_gram_memory_chunks[start_idx : start_idx + max_n_gram_len]
                     arbitual_n_gram_memory.append(n_gram)
 
+                valid_sample = True
                 # result dict creation
                 probe_len_unit_sets = {}
                 for probe_len in tqdm(range(2, target_length), desc=f"  L={target_length}, Smp {len(sample_results)+1}: Probing", leave=False):
+                    if not valid_sample:
+                        break
                     probe_texts_for_len = test_probe_chunks[0:probe_len]  # Strs for this probe_len prefix
                     probe_pos_unit_sets = {}
 
@@ -690,17 +693,26 @@ class FinesseEvaluator:
                     all_positive_texts = []  # List of full_text strings
                     all_negative_texts = []  # List of full_text strings
                     metadata_list = []  # List of (probe_pos, 'positive'/'negative', group_idx)
-
                     for probe_pos in range(target_length - probe_len + 1):  # +1 to include end
+                        if not valid_sample:
+                            break
+
                         # Positive group (forward probe: effective AB order via reversed insert)
                         for group_idx, positive_n_gram in enumerate(arbitual_n_gram_memory):
                             crafted_strs = positive_n_gram.copy()  # List of str
                             # Insert reversed to achieve forward order (A then B)
                             for chunk_str in reversed(probe_texts_for_len):
                                 crafted_strs.insert(probe_pos, chunk_str)
-                            full_text = self.chunk_concat_sep.join(crafted_strs)
-                            all_positive_texts.append(full_text)
-                            metadata_list.append((probe_pos, 'positive', group_idx))
+                                full_text = self.chunk_concat_sep.join(crafted_strs)
+                                if self.embedder.count_tokens(full_text) <= max_ctx:
+                                    all_positive_texts.append(full_text)
+                                    metadata_list.append((probe_pos, 'positive', group_idx))
+                                else:
+                                    valid_sample = False
+                                    break
+
+                            if not valid_sample:
+                                break
 
                         # Negative group (reverse probe: effective BA order via direct insert)
                         for group_idx, negative_n_gram in enumerate(arbitual_n_gram_memory):
@@ -708,10 +720,13 @@ class FinesseEvaluator:
                             # Insert in order to achieve reverse (B then A)
                             for chunk_str in probe_texts_for_len:
                                 crafted_strs.insert(probe_pos, chunk_str)
-                            full_text = self.chunk_concat_sep.join(crafted_strs)
-                            all_negative_texts.append(full_text)
-                            metadata_list.append((probe_pos, 'negative', group_idx))
-
+                                full_text = self.chunk_concat_sep.join(crafted_strs)
+                                if self.embedder.count_tokens(full_text) <= max_ctx:
+                                    all_negative_texts.append(full_text)
+                                    metadata_list.append((probe_pos, 'negative', group_idx))
+                                else:
+                                    valid_sample = False
+                                    break
                     # Mini-batch encoding to avoid OOM
                     all_positive_embeddings = []
                     all_negative_embeddings = []
@@ -784,6 +799,10 @@ class FinesseEvaluator:
                     for n_gram in arbitual_n_gram_memory:
                         if len(n_gram) > 1:
                             n_gram.pop()  # Remove last, now smaller for next probe_len
+
+                if not valid_sample:
+                    # One of the constructed texts exceeded max_ctx. Cancel this entire iteration and retry.
+                    continue
 
                 # Sample result
                 sample_dict = probe_len_unit_sets
@@ -879,9 +898,12 @@ class FinesseEvaluator:
     
         for ds_config in self.config.datasets:
             # Load dataset with specific revision for declarative reproducibility
+            
             dataset = load_dataset(
                 path=ds_config.path,
                 split=ds_config.split,
+                data_dir=ds_config.data_dir if ds_config.data_files is None else None,
+                data_files=ds_config.data_files,
                 revision=ds_config.commit_hash if ds_config.commit_hash else None
             )
         

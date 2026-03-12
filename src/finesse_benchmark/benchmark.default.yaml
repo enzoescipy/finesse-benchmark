@@ -102,17 +102,17 @@ models:
 # Datasets Configuration
 datasets:
   - path: "uonlp/CulturaX"
-    split: "en"
+    split: "train"
+    data_files: "en/en_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "ru"
+    split: "train"
+    data_dir: "la"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
-  - path: "uonlp/CulturaX"
-    split: "zh"
-    text_column: "text"
-    commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
 # Probe Configuration
 probe_config:
   sequence_length:

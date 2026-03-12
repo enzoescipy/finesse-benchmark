@@ -35,15 +35,15 @@ models:
   #
   # How it works:
   # - Before evaluation starts (in __init__), the evaluator performs a 'Pre-flight Qualification Check':
-  #   - For merger_mode: Compares probe_config.token_per_sample against base_embedder.max_context_length; raises error if exceeded.
-  #   - For native/byok_mode: Calculates total required tokens per sequence (target_length * token_per_sample + overhead) against max_context_length; skips exceeding samples during run.
+  #   - For merger_mode: Compares probe_config.tokper_sample against base_embedder.max_context_length; raises error if exceeded.
+  #   - For native/byok_mode: Calculates total required tokens per sequence (target_length * tokper_sample + overhead) against max_context_length; skips exceeding samples during run.
   #   - If max_context_length is None (default), raises ValueError to prevent invalid runs.
   #
   # Recommendations:
   # - ALWAYS set this for ALL embedders: base_embedder (merger_mode), native_embedder (native_mode), byok_embedder (byok_mode).
   #   - Examples: 512 for multilingual-e5-base (base), 8192 for snowflake-arctic-embed-l (native), 8192 for text-embedding-3-large (byok).
   # - Check model docs/HF card for exact value (often max_position_embeddings, but verify effective limit).
-  # - Adjust probe_config.token_per_sample or sequence_length.max to stay within limits.
+  # - Adjust probe_config.tokper_sample or sequence_length.max to stay within limits.
   #
   # Example: For intfloat/multilingual-e5-base (base_embedder), official context is 512 tokens.
   #
@@ -106,131 +106,194 @@ models:
 # Datasets Configuration (Fixed for Reproducibility)
 datasets:
   - path: "uonlp/CulturaX"
-    split: "en"
+    split: "train"
+    data_files: "en/en_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "ru"
+    split: "train"
+    data_files: "ru/ru_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "es"
+    split: "train"
+    data_files: "es/es_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "de"
+    split: "train"
+    data_files: "de/de_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "fr"
+    split: "train"
+    data_files: "fr/fr_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "zh"
+    split: "train"
+    data_files: "zh/zh_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "it"
+    split: "train"
+    data_files: "it/it_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "pt"
+    split: "train"
+    data_files: "pt/pt_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "pl"
+    split: "train"
+    data_files: "pl/pl_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "ja"
+    split: "train"
+    data_files: "ja/ja_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "nl"
+    split: "train"
+    data_files: "nl/nl_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "ar"
+    split: "train"
+    data_files: "ar/ar_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "tr"
+    split: "train"
+    data_files: "tr/tr_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "cs"
+    split: "train"
+    data_files: "cs/cs_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "vi"
+    split: "train"
+    data_files: "vi/vi_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "fa"
+    split: "train"
+    data_files: "fa/fa_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "hu"
+    split: "train"
+    data_files: "hu/hu_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "el"
+    split: "train"
+    data_files: "el/el_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "ro"
+    split: "train"
+    data_files: "ro/ro_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "sv"
+    split: "train"
+    data_files: "sv/sv_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "uk"
+    split: "train"
+    data_files: "uk/uk_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "fi"
+    split: "train"
+    data_files: "fi/fi_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "ko"
+    split: "train"
+    data_files: "ko/ko_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "da"
+    split: "train"
+    data_files: "da/da_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "bg"
+    split: "train"
+    data_files: "bg/bg_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "no"
+    split: "train"
+    data_files: "no/no_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "hi"
+    split: "train"
+    data_files: "hi/hi_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "sk"
+    split: "train"
+    data_files: "sk/sk_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "th"
+    split: "train"
+    data_files: "th/th_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "lt"
+    split: "train"
+    data_files: "lt/lt_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "ca"
+    split: "train"
+    data_files: "ca/ca_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+
   - path: "uonlp/CulturaX"
-    split: "id"
+    split: "train"
+    data_files: "id/id_part_00000.parquet"
     text_column: "text"
     commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
 
@@ -241,7 +304,7 @@ probe_config:
     min: 4   # Minimum length: Tests basic composition
     max: 64  # Maximum length: Tests scaling up to moderate long-context
   samples_per_length: 25  # Samples per length: Ensures reliable averages (25 evals per point)
-  token_per_sample : 500  # Number of tokens per chunk, 512 - 2 (for the maximum capacity but having safer margin)
+  tokper_sample : 500  # Number of tokens per chunk, 512 - 2 (for the maximum capacity but having safer margin)
   group_amount: 100  # Only for the SRS evaluation. Decides how much to collect ordered-series and reversed-series to compare.
 
 # Advanced Settings (Defaults for Fair Comparison)
