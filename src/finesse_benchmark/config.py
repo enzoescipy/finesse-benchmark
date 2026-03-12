@@ -51,8 +51,9 @@ class ModelsConfig(BaseModel):
 
 class DatasetConfig(BaseModel):
     """데이터셋 설정"""
-    path: str = Field(default="enzoescipy/finesse-benchmark-database", description="HF 데이터셋 경로")
-    split: str = Field(default="train")
+    path: str = Field(..., description="HF 데이터셋 경로")
+    split: str = Field(..., description="데이터셋 스플릿 (e.g., 'train', 'test')")
+    text_column: str = Field(..., description="The name of the column containing the main text content.")
     commit_hash: str = Field(..., description="Hugging Face 데이터셋의 revision/commit_hash. 재현성을 위해 필수.")
 
 class OutputConfig(BaseModel):
@@ -65,7 +66,7 @@ class BenchmarkConfig(BaseModel):
     mode: Literal["merger_mode", "native_mode", "byok_mode"] = Field(default="merger_mode", description="merger_mode, native_mode 또는 byok_mode")
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     probe_config: ProbeConfig = Field(default_factory=ProbeConfig)
-    dataset: DatasetConfig = Field(default_factory=DatasetConfig)
+    datasets: list[DatasetConfig] = Field(default_factory=list, description="A list of dataset configurations to be used for sampling.")
     output: OutputConfig = Field(default_factory=OutputConfig)
     advanced: Dict[str, Any] = Field(default_factory=dict, description="고급 옵션 (batch_size, device 등)")
     seed: Optional[int] = Field(default=42, description="Random seed for reproducibility")

@@ -99,12 +99,20 @@ models:
   # litellm will automatically detect and use the appropriate environment variable
   # based on the 'provider' you specify. This ensures your keys remain secure.
 
-# Dataset Configuration
-dataset:
-  path: "enzoescipy/finesse-benchmark-database"  # HF dataset path
-  split: "train"  # Split to use
-  commit_hash: "b59ddd807c06447b2a03e2ad9652c38c11f8134c"
-
+# Datasets Configuration
+datasets:
+  - path: "uonlp/CulturaX"
+    split: "en"
+    text_column: "text"
+    commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+  - path: "uonlp/CulturaX"
+    split: "ru"
+    text_column: "text"
+    commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
+  - path: "uonlp/CulturaX"
+    split: "zh"
+    text_column: "text"
+    commit_hash: "6a8734bc69fefcbb7735f4f9250f43e4cd7a442e"
 # Probe Configuration
 probe_config:
   sequence_length:

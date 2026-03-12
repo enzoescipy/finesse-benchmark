@@ -10,7 +10,7 @@ import warnings
 from transformers import AutoTokenizer
 import importlib.metadata
 import cpuinfo
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 from .config import BenchmarkConfig
 from .scoring import calculate_self_attestation_scores, calculate_self_attestation_scores_bottom_up
@@ -69,15 +69,12 @@ class FinesseEvaluator:
                     f"Maximum sequence may exceed byok_embedder context: estimated {estimated_max_tokens} > {byok_embedder_config.max_context_length}. "
                     f"Samples exceeding limit will be automatically skipped during evaluation."
                 )
-
-
-
     def native_run(self) -> Dict[str, Any]:
         """Finesse 벤치마크 실행: Stratified CSAT with Single-Pass Conveyor Belt (Raw mode - embeddings only)"""
-        
-        dataset = self._dataset_prepare_and_validate()
-        iterator = iter(dataset)
-
+        # Initialize Unified Lottery Box for multi-dataset sampling
+        lottery_box_state = self._dataset_prepare_and_validate(
+            mode='rss'
+        )
         # Find ctx
         max_ctx = None
         if self.config.mode == 'native_mode':
@@ -117,11 +114,9 @@ class FinesseEvaluator:
                 continue
 
             typer.echo(f"probe sequence [{target_length}] in progress ...")
-
             sample_results = []  
             attempts = 0
-            max_attempts = len(dataset)  # 데이터셋 전체를 최대 시도 횟수
-
+            max_attempts = lottery_box_state['total_tickets']  # 전체 티켓 수를 최대 시도 횟수
             pbar_samples = tqdm(total=self.config.probe_config.samples_per_length, desc=f"L={target_length} Samples", leave=False)
 
             # target_length 개의 청크로 구성된 시퀀스를 samples_per_length번 테스트
@@ -133,7 +128,10 @@ class FinesseEvaluator:
                 typer.echo(f"probe sequence [{target_length}] in progress ({len(sample_results)}/{self.config.probe_config.samples_per_length})...")
 
                 # 이 테스트를 위해 target_length 개의 청크를 생성
-                chunk_texts = self._get_text_chunck_from_database(target_length=target_length, dataset=dataset, iterator=iterator)
+                chunk_texts = self._get_text_chunck_from_database(
+                    target_length=target_length,
+                    lottery_box_state=lottery_box_state
+                )
 
                 # After building, runtime check (for exact after estimate)
                 valid_sample = True
@@ -208,9 +206,10 @@ class FinesseEvaluator:
 
     def merger_run(self) -> Dict[str, Any]:
         """Finesse 벤치마크 실행: Stratified CSAT with Single-Pass Conveyor Belt (Raw mode - embeddings only)"""
-        # Load dataset with specific revision for declarative reproducibility
-        dataset = self._dataset_prepare_and_validate()
-        iterator = iter(dataset)
+        # Initialize Unified Lottery Box for multi-dataset sampling
+        lottery_box_state = self._dataset_prepare_and_validate(
+            mode='rss'
+        )
 
         # find min, max length
         min_length, max_length = self.config.probe_config.sequence_length.min, self.config.probe_config.sequence_length.max
@@ -241,11 +240,9 @@ class FinesseEvaluator:
 
         for target_length in tqdm(range(min_length, max_length + 1), desc="Merger RSS: Probing Lengths"):
             typer.echo(f"probe sequence [{target_length}] in progress ...")
-            
             sample_results = []  # List of 25 dicts per length
             attempts = 0
-            max_attempts = len(dataset)  # 데이터셋 전체를 최대 시도 횟수로
-            
+            max_attempts = lottery_box_state['total_tickets']  # 전체 티켓 수를 최대 시도 횟수            
             # target_length 개의 청크로 구성된 시퀀스를 samples_per_length번 테스트
             while len(sample_results) < self.config.probe_config.samples_per_length:
                 attempts += 1
@@ -255,7 +252,10 @@ class FinesseEvaluator:
                 typer.echo(f"probe sequence [{target_length}] in progress ({len(sample_results)}/{self.config.probe_config.samples_per_length})...")
 
                 # 이 테스트를 위해 target_length 개의 청크를 생성
-                chunk_texts = self._get_text_chunck_from_database(target_length=target_length, dataset=dataset, iterator=iterator)
+                chunk_texts = self._get_text_chunck_from_database(
+                    target_length=target_length,
+                    lottery_box_state=lottery_box_state
+                )
 
                 # 청크들 임베딩 with timing
                 chunk_times = []
@@ -327,9 +327,10 @@ class FinesseEvaluator:
 
     def merger_run_srs(self) -> Dict[str, Any]:
         """Finesse 벤치마크 실행: Stratified CSAT with Single-Pass Conveyor Belt (Raw mode - embeddings only)"""
-        # Load dataset with specific revision for declarative reproducibility
-        dataset = self._dataset_prepare_and_validate()
-        iterator = iter(dataset)
+        # Initialize Unified Lottery Box for multi-dataset sampling
+        lottery_box_state = self._dataset_prepare_and_validate(
+            mode='srs'
+        )
 
         # find min, max length
         min_length, max_length = self.config.probe_config.sequence_length.min, self.config.probe_config.sequence_length.max
@@ -362,13 +363,23 @@ class FinesseEvaluator:
 
         for target_length in range(min_length, max_length + 1):
             typer.echo(f"probe sequence [{target_length}] in progress ...")
+
             sample_results = []  # List of 25 dicts per length
             pbar_samples = tqdm(total=self.config.probe_config.samples_per_length, desc=f"L={target_length} Samples", leave=False)
+            attempts = 0
+            max_attempts = lottery_box_state['total_tickets']
             # target_length 개의 청크로 구성된 시퀀스를 samples_per_length번 테스트
             while len(sample_results) < self.config.probe_config.samples_per_length:
+                attempts += 1
+                if attempts > max_attempts:
+                    raise ValueError(f"데이터셋 소진: target_length={target_length}에서 충분한 샘플을 찾을 수 없음. {len(sample_results)}/{self.config.probe_config.samples_per_length}개만 생성됨.")
                 typer.echo(f"probe sequence [{target_length}] in progress ({len(sample_results)}/{self.config.probe_config.samples_per_length})...")                
+
                 # testing probe chunks yield
-                test_probe_chunks = self._get_text_chunck_from_database(target_length=target_length - 1, dataset=dataset, iterator=iterator)
+                test_probe_chunks = self._get_text_chunck_from_database(
+                    target_length=target_length - 1,
+                    lottery_box_state=lottery_box_state
+                )
                 
                 arbitual_probe_group = []
                 current_probe = []
@@ -411,14 +422,12 @@ class FinesseEvaluator:
                     del single_on_device
 
                 del cumulative_embeddings  # Final cleanup
-
                 # test group factory - Adjusted for symmetric context: fetch for group_amount only
                 group_amount = self.config.probe_config.group_amount
                 max_n_gram_len = target_length - 2
                 n_gram_memory_chunks = self._get_text_chunck_from_database(
-                    target_length=group_amount * max_n_gram_len, 
-                    dataset=dataset, 
-                    iterator=iterator
+                    target_length=group_amount * max_n_gram_len,
+                    lottery_box_state=lottery_box_state
                 )
                 arbitual_n_gram_memory = []
                 for i in range(group_amount):
@@ -564,13 +573,12 @@ class FinesseEvaluator:
             }
 
         return self._package_metadata_data(length_results=length_results, scoring_name='srs')
-
     def native_run_srs(self) -> Dict[str, Any]:
         """Finesse 벤치마크 실행: Stratified CSAT with Single-Pass Conveyor Belt (Raw mode - embeddings only) - Native Mode"""
-        # Load dataset with specific revision for declarative reproducibility
-        dataset = self._dataset_prepare_and_validate()
-        iterator = iter(dataset)
-
+        # Initialize Unified Lottery Box for multi-dataset sampling
+        lottery_box_state = self._dataset_prepare_and_validate(
+            mode='srs'
+        )
         # find min, max length
         min_length, max_length = self.config.probe_config.sequence_length.min, self.config.probe_config.sequence_length.max
 
@@ -606,16 +614,23 @@ class FinesseEvaluator:
                 continue
 
             typer.echo(f"probe sequence [{target_length}] in progress ...")
-            
+
             sample_results = []  # List of 25 dicts per length
             pbar_samples = tqdm(total=self.config.probe_config.samples_per_length, desc=f"L={target_length} Samples", leave=False)
+            attempts = 0
+            max_attempts = lottery_box_state['total_tickets']
 
             # target_length 개의 청크로 구성된 시퀀스를 samples_per_length번 테스트
             while len(sample_results) < self.config.probe_config.samples_per_length:
+                attempts += 1
+                if attempts > max_attempts:
+                    raise ValueError(f"데이터셋 소진: target_length={target_length}에서 충분한 샘플을 찾을 수 없음. {len(sample_results)}/{self.config.probe_config.samples_per_length}개만 생성됨.")
                 typer.echo(f"probe sequence [{target_length}] in progress ({len(sample_results)}/{self.config.probe_config.samples_per_length})...")
-                
                 # testing probe chunks yield
-                test_probe_chunks = self._get_text_chunck_from_database(target_length=target_length - 1, dataset=dataset, iterator=iterator)
+                test_probe_chunks = self._get_text_chunck_from_database(
+                    target_length=target_length - 1,
+                    lottery_box_state=lottery_box_state
+                )
                 
                 arbitual_probe_group = []
                 current_probe = []
@@ -654,9 +669,8 @@ class FinesseEvaluator:
                 group_amount = self.config.probe_config.group_amount
                 max_n_gram_len = target_length - 2
                 n_gram_memory_chunks = self._get_text_chunck_from_database(
-                    target_length=group_amount * max_n_gram_len, 
-                    dataset=dataset, 
-                    iterator=iterator
+                    target_length=group_amount * max_n_gram_len,
+                    lottery_box_state=lottery_box_state
                 )
                 arbitual_n_gram_memory = []
                 for i in range(group_amount):
@@ -818,14 +832,16 @@ class FinesseEvaluator:
             device_info['gpu'] = 'none'
         # Torch version
         device_info['torch_version'] = torch.__version__
-
-        # Capture dataset metadata from config declaration
-        dataset_metadata = {
-            'path': self.config.dataset.path,
-            'split': self.config.dataset.split,
-            'commit_hash': self.config.dataset.commit_hash
-        }
-
+        # Capture dataset metadata from config declaration (multi-dataset support)
+        dataset_metadata = [
+            {
+                'path': ds.path,
+                'split': ds.split,
+                'text_column': ds.text_column,
+                'commit_hash': ds.commit_hash
+            }
+            for ds in self.config.datasets
+        ]
         metadata = {
             'package_versions': package_metadata,
             'dataset': dataset_metadata,
@@ -842,80 +858,149 @@ class FinesseEvaluator:
             }
         }
 
+    def _dataset_prepare_and_validate(self, mode: str = 'rss') -> dict:
+        """
+        Unified Lottery Box Architecture: Load multiple datasets and prepare lottery state.
+    
+        Returns a dictionary containing:
+        - 'iterators': List of shuffled dataset iterators
+        - 'total_tickets': Total number of available samples across all datasets
+        - 'remaining_counts': List of remaining sample counts per dataset
+        - 'dataset_configs': List of dataset configurations for text column mapping
+        """
+        import random
 
-    def _dataset_prepare_and_validate(self) -> Any:
-        # Load dataset with specific revision for declarative reproducibility
-        dataset = load_dataset(
-            path=self.config.dataset.path,
-            split=self.config.dataset.split,
-            revision=self.config.dataset.commit_hash
-        )
-
-        # Shuffle dataset deterministically for reproducibility
+        probe_config = self.config.probe_config
+    
+        # Load all datasets specified in config
+        iterators = []
+        dataset_configs = []
+        remaining_counts = []
+    
+        for ds_config in self.config.datasets:
+            # Load dataset with specific revision for declarative reproducibility
+            dataset = load_dataset(
+                path=ds_config.path,
+                split=ds_config.split,
+                revision=ds_config.commit_hash if ds_config.commit_hash else None
+            )
+        
+            # Shuffle dataset deterministically for reproducibility
+            if self.config.seed is not None:
+                dataset = dataset.shuffle(seed=self.config.seed)
+        
+            # Create iterator and store state
+            iterators.append(iter(dataset))
+            dataset_configs.append(ds_config)
+            remaining_counts.append(len(dataset))
+    
+        # Calculate total available tickets
+        total_tickets = sum(remaining_counts)
+    
+        # Calculate required chunks for validation
+        min_length, max_length = probe_config.sequence_length.min, probe_config.sequence_length.max
+        if mode == 'rss':
+            total_chunks_required = sum(L * probe_config.samples_per_length for L in range(min_length, max_length + 1))
+        elif mode == 'srs':
+            total_chunks_required = sum(
+                (
+                    (L - 1) + (probe_config.group_amount * (L - 2))
+                ) * probe_config.samples_per_length
+                for L in range(min_length, max_length + 1) if L >= 2
+            )
+        else:
+            raise ValueError(f"Invalid validation mode: {mode}")
+    
+        # Validate that we have enough data
+        if total_tickets < total_chunks_required:
+            raise ValueError(
+                f"Total available samples across all datasets ({total_tickets}) is smaller than "
+                f"the required total chunks ({total_chunks_required}) for mode '{mode}'. "
+                f"More data or additional datasets are needed."
+            )
+    
+        # Initialize random state for lottery draws
         if self.config.seed is not None:
-            dataset = dataset.shuffle(seed=self.config.seed)
-
-        min_length, max_length = self.config.probe_config.sequence_length.min, self.config.probe_config.sequence_length.max
-        total_needed_samples = (max_length - min_length + 1) * self.config.probe_config.samples_per_length
-        if len(dataset) < total_needed_samples:
-            raise ValueError(f"데이터셋 크기({len(dataset)})가 필요 샘플({total_needed_samples})보다 작음. 더 많은 데이터 필요.")
-
-        return dataset
-
-    def _get_text_chunck_from_database(self, target_length:int, dataset:Any, iterator:Any) -> List[str]:
-        # 이 테스트를 위해 target_length 개의 청크를 생성
+            random.seed(self.config.seed)
+    
+        return {
+            'iterators': iterators,
+            'total_tickets': total_tickets,
+            'remaining_counts': remaining_counts,
+            'dataset_configs': dataset_configs,
+            'random_state': random
+        }
+    
+    def _get_text_chunck_from_database(self, target_length: int, lottery_box_state: dict) -> List[str]:
+        """
+        Unified Lottery Box with Rejection Sampling: Draw samples from multiple datasets.
+    
+        Uses a lottery ticket system to randomly select samples from across all datasets,
+        with rejection sampling to filter out texts that are too short for chunking.
+        """
+        import random
+    
         chunk_texts = []
-        chunk_token_count = 0
-        
-        # target_length 개의 청크를 생성할 때까지 데이터셋에서 구슬을 가져옴
+        target_token_size = self.config.probe_config.token_per_sample
+    
+        # Extract state from lottery box
+        iterators = lottery_box_state['iterators']
+        remaining_counts = lottery_box_state['remaining_counts']
+        dataset_configs = lottery_box_state['dataset_configs']
+        random_state = lottery_box_state.get('random_state', random)
+    
         while len(chunk_texts) < target_length:
-            try:
-                sample = next(iterator)
-                beads = sample['beads']
-                
-                # 구슬이 없으면 다음 샘플로
-                if not beads:
-                    continue
-                
-                # 이 샘플에서 하나의 청크 생성
-                current_chunk = []
-                current_token_count = 0
-                target_token_size = self.config.probe_config.token_per_sample
-                
-                for bead_text in beads:
-                    bead_token_count = self.embedder.count_tokens(bead_text)
-                    
-                    # 토큰 수가 초과하면 정확히 잘라서 청크 완성
-                    if current_token_count + bead_token_count > target_token_size:
-                        tokens_needed = target_token_size - current_token_count
-                        if tokens_needed > 0:
-                            needed_text = self.embedder.chunk_text(bead_text, tokens_needed)
-                            current_chunk.append(needed_text)
-                        
-                        # 청크 완성
-                        chunk_texts.append(self.chunk_concat_sep.join(current_chunk))
-                        chunk_token_count += target_token_size
-                        break
-                    
-                    # 청크에 구슬 추가
-                    current_chunk.append(bead_text)
-                    current_token_count += bead_token_count
-                    
-                    # 정확히 타겟 토큰 수에 도달하면 청크 완성
-                    if current_token_count == target_token_size:
-                        chunk_texts.append(self.chunk_concat_sep.join(current_chunk))
-                        chunk_token_count += target_token_size
-                        break
-                
-
-            except (StopIteration, KeyError):
-                # 이터레이터가 끝나면 다시 시작
-                iterator = iter(dataset)
-                continue
-
+            # Check if lottery box is exhausted
+            if lottery_box_state['total_tickets'] == 0:
+                raise ValueError(
+                    'Fatal Error: Unified Lottery Box exhausted. All datasets have been fully consumed. '
+                    'Halting benchmark to prevent data contamination.'
+                )
         
+            # Draw a random ticket
+            ticket_index = random_state.randint(0, lottery_box_state['total_tickets'] - 1)
+        
+            # Find which dataset this ticket belongs to
+            dataset_index = 0
+            cumulative_count = 0
+            for i, count in enumerate(remaining_counts):
+                cumulative_count += count
+                if ticket_index < cumulative_count:
+                    dataset_index = i
+                    break
+        
+            # Consume the ticket
+            lottery_box_state['total_tickets'] -= 1
+            remaining_counts[dataset_index] -= 1
+        
+            # Get sample from the chosen dataset
+            try:
+                sample = next(iterators[dataset_index])
+            except StopIteration:
+                # This shouldn't happen if our counts are correct, but handle gracefully
+                continue
+        
+            # Extract raw text using the configured text column
+            ds_config = dataset_configs[dataset_index]
+            text_column = ds_config.text_column
+        
+            try:
+                raw_text = sample[text_column]
+            except KeyError:
+                # Skip samples missing the text column
+                continue
+        
+            # Rejection sampling: Check if text is long enough
+            text_token_count = self.embedder.count_tokens(raw_text)
+            if text_token_count < target_token_size:
+                # Text too short, reject and draw again
+                continue
+        
+            # Valid sample: create chunk using embedder's chunking
+            chunk = self.embedder.chunk_text(raw_text, target_token_size)
+            chunk_texts.append(chunk)
+    
         return chunk_texts
-
     def _setup_token_counter(self):
         """모드에 따라 적절한 토큰 카운터를 설정한다."""
         if self.config.mode == 'byok_mode':
