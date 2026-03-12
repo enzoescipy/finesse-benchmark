@@ -71,11 +71,17 @@ def generate_raw_data(
         raise typer.Exit(code=1)
     with open(config_path, "r") as f:
         yaml_data = yaml.safe_load(f)
+
     try:
         config = BenchmarkConfig.model_validate(yaml_data)
         typer.echo(f"Loaded config from {config_path}")
     except Exception as e:
         typer.echo(f"Error validating config: {e}")
+        raise typer.Exit(code=1)
+
+    # Validate that datasets list is not empty
+    if not config.datasets:
+        typer.echo("❌ Error: The 'datasets' list in your config is empty. Please specify at least one dataset.")
         raise typer.Exit(code=1)
     
     
@@ -202,10 +208,18 @@ def generate_raw_data(
         else:
             raw_data = evaluator.native_run()
             typer.echo("  Running native_run for RSS benchmark.")
-    
+
     # Save full raw data (config + raw_results) to .pt file
-    dataset_name = config.dataset.path.split('/')[-1]
-    save_path = os.path.join(output_dir, f"embeddings_{config.mode}_{config.metric}_{dataset_name}.pt")
+    if config.mode == "merger_mode":
+        representative = config.models.merger.name
+    elif config.mode == "byok_mode":
+        representative = config.models.byok_embedder.name
+    elif config.mode == "native_mode":
+        representative = config.models.base_embedder.name
+
+    representative = representative.replace('/','_')
+
+    save_path = os.path.join(output_dir, f"embeddings_{config.mode}_{config.metric}_{representative}.pt")
     torch.save(raw_data, save_path)
     
     typer.echo(f"Raw data (with config) saved to {save_path}")
