@@ -215,7 +215,7 @@ def generate_raw_data(
     elif config.mode == "byok_mode":
         representative = config.models.byok_embedder.name
     elif config.mode == "native_mode":
-        representative = config.models.base_embedder.name
+        representative = config.models.native_embedder.name
 
     representative = representative.replace('/','_')
 
