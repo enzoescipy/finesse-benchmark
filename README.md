@@ -266,7 +266,13 @@ BYOK mode integrates external embedding APIs (e.g., OpenAI, Cohere) via [LiteLLM
 - **models**: Mode-specific; unused fields default to `None` (no download).
   - `merger`: Sequence-merger path (e.g., `"enzoescipy/sequence-merger-tiny"`).
   - `base_embedder`/`native_embedder`: Embedder path (e.g., `"intfloat/multilingual-e5-base"`).
-- **dataset**: HF path (default: `"enzoescipy/finesse-benchmark-database"`), split (`"train"`).
+- **datasets**: The list of HF dataset import statement;
+  - `path`: "author/databasename" hf path
+  - `split`: "train" or specific split on huggingface database
+  - `data_files`: specific file convension like "en/en_part_00000.parquet". wildcard(`*`) is allowed on filename, like "en/en_part_0000*.parquet"
+  - `data_dir`: dataset directory subset like "en". if exists, override the `data_files`.
+  - `text_column`: The column that the actual corpus exists. normally the "text".
+  - `commit_hash`: commit version hash of the hf  database. like "a1b2c3..."
 - **probe_config**:
   - `sequence_length`: `{min: 5, max: 16}` (probe lengths in tokens).
   - `samples_per_length`: 1+ (evals per length).
