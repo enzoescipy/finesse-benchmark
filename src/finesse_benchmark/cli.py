@@ -118,7 +118,7 @@ def generate_raw_data(
         return ModelClass(config_path=config_path)
     
     # Import the engine implementations
-    from .implementations import HuggingFaceEmbedder, ByokEmbedder, HuggingFaceSynthesizer, NullSynthesizer
+    from .implementations import HuggingFaceEmbedder, HuggingFaceSynthesizer, NullSynthesizer #, ByokEmbedder
     
     # Initialize embedder and synthesizer based on mode
     if config.mode == 'merger_mode':
@@ -168,7 +168,8 @@ def generate_raw_data(
 
     elif config.mode == 'byok_mode':
         typer.echo("  Mode: byok_mode")
-        if not config.models.byok_embedder:
+        # if not config.models.byok_embedder:
+        if True: # litellm disabled issue, hotfix
             typer.echo("❌ Error: BYOK mode requires 'models.byok_embedder' configuration.")
             raise typer.Exit(code=1)
     

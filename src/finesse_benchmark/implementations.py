@@ -1,7 +1,7 @@
 from typing import Optional
 import torch
 from transformers import AutoModel, AutoTokenizer
-import litellm
+# import litellm 
 import tiktoken
 import warnings
 
@@ -113,116 +113,116 @@ class HuggingFaceEmbedder(FinesseEmbedder):
         # Decode back to text
         return self.tokenizer.decode(tokens)
 
-class ByokEmbedder(FinesseEmbedder):
-    """
-    BYOK (Bring Your Own Key) API를 사용하는 임베딩 엔진 구현체.
-    """
+# class ByokEmbedder(FinesseEmbedder):
+#     """
+#     BYOK (Bring Your Own Key) API를 사용하는 임베딩 엔진 구현체.
+#     """
     
-    def __init__(self, provider: str, model_name: str, pool_type: str, tokenizer_path: Optional[str] = None):
-        """
-        Args:
-            provider: API 제공자 (예: "openai")
-            model_name: 모델 이름 (예: "text-embedding-3-small")
-            pool_type: 풀링 방식 ('mean', 'cls', 'last') - API 내부 처리용으로 저장
-            tokenizer_path: 토크나이저 경로 (선택사항)
-        """
-        self.provider = provider
-        self.model_name = model_name
-        self.pool_type = pool_type
-        self.litellm_model = f"{provider}/{model_name}"
-        self.device = torch.device("cpu")  # BYOK는 CPU에서 작동
+#     def __init__(self, provider: str, model_name: str, pool_type: str, tokenizer_path: Optional[str] = None):
+#         """
+#         Args:
+#             provider: API 제공자 (예: "openai")
+#             model_name: 모델 이름 (예: "text-embedding-3-small")
+#             pool_type: 풀링 방식 ('mean', 'cls', 'last') - API 내부 처리용으로 저장
+#             tokenizer_path: 토크나이저 경로 (선택사항)
+#         """
+#         self.provider = provider
+#         self.model_name = model_name
+#         self.pool_type = pool_type
+#         self.litellm_model = f"{provider}/{model_name}"
+#         self.device = torch.device("cpu")  # BYOK는 CPU에서 작동
         
-        # Store tokenizer configuration for count_tokens method
-        self.tokenizer_path = tokenizer_path
+#         # Store tokenizer configuration for count_tokens method
+#         self.tokenizer_path = tokenizer_path
         
-        # Token counter setup
-        self.token_counter = self._setup_token_counter(tokenizer_path)
+#         # Token counter setup
+#         self.token_counter = self._setup_token_counter(tokenizer_path)
     
-    def _setup_token_counter(self, tokenizer_path: Optional[str] = None):
-        """토큰 카운터를 설정한다."""
-        # 1. De Facto Standardization: Use tiktoken for OpenAI models
-        if self.provider == 'openai':
-            try:
-                encoding = tiktoken.encoding_for_model(self.model_name)
-                return lambda text: len(encoding.encode(text))
-            except KeyError:
-                warnings.warn(f"tiktoken encoding for {self.model_name} not found. Defaulting to general-purpose tokenizer.")
+#     def _setup_token_counter(self, tokenizer_path: Optional[str] = None):
+#         """토큰 카운터를 설정한다."""
+#         # 1. De Facto Standardization: Use tiktoken for OpenAI models
+#         if self.provider == 'openai':
+#             try:
+#                 encoding = tiktoken.encoding_for_model(self.model_name)
+#                 return lambda text: len(encoding.encode(text))
+#             except KeyError:
+#                 warnings.warn(f"tiktoken encoding for {self.model_name} not found. Defaulting to general-purpose tokenizer.")
         
-        # 2. Delegation of Autonomy: Use user-specified tokenizer
-        if tokenizer_path:
-            tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
-            return lambda text: len(tokenizer.encode(text, add_special_tokens=False))
+#         # 2. Delegation of Autonomy: Use user-specified tokenizer
+#         if tokenizer_path:
+#             tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+#             return lambda text: len(tokenizer.encode(text, add_special_tokens=False))
         
-        # 3. Fallback with clear warning
-        warnings.warn(f"BYOK provider '{self.provider}' is not OpenAI and no 'tokenizer_path' was provided. Falling back to default tokenizer.")
-        fallback_tokenizer = AutoTokenizer.from_pretrained("intfloat/multilingual-e5-base")
-        return lambda text: len(fallback_tokenizer.encode(text, add_special_tokens=False))
+#         # 3. Fallback with clear warning
+#         warnings.warn(f"BYOK provider '{self.provider}' is not OpenAI and no 'tokenizer_path' was provided. Falling back to default tokenizer.")
+#         fallback_tokenizer = AutoTokenizer.from_pretrained("intfloat/multilingual-e5-base")
+#         return lambda text: len(fallback_tokenizer.encode(text, add_special_tokens=False))
     
-    def encode(self, texts: list[str]) -> torch.Tensor:
-        """API를 통해 텍스트 리스트를 임베딩하여 반환한다."""
-        # Call API
-        response = litellm.embedding(model=self.litellm_model, input=texts)
+#     def encode(self, texts: list[str]) -> torch.Tensor:
+#         """API를 통해 텍스트 리스트를 임베딩하여 반환한다."""
+#         # Call API
+#         response = litellm.embedding(model=self.litellm_model, input=texts)
         
-        # Extract embeddings
-        embedding_lists = [item['embedding'] for item in response.data]
-        embeddings = torch.tensor(embedding_lists, dtype=torch.float32)
+#         # Extract embeddings
+#         embedding_lists = [item['embedding'] for item in response.data]
+#         embeddings = torch.tensor(embedding_lists, dtype=torch.float32)
         
-        # Normalize
-        embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
-        return embeddings
+#         # Normalize
+#         embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
+#         return embeddings
     
     
-    def device(self) -> torch.device:
-        return self.device
+#     def device(self) -> torch.device:
+#         return self.device
 
-    def count_tokens(self, text: str) -> int:
-        """주어진 텍스트의 토큰 수를 반환한다."""
-        # 1. De Facto Standardization: Use tiktoken for OpenAI models
-        if self.provider == 'openai':
-            try:
-                encoding = tiktoken.encoding_for_model(self.model_name)
-                return len(encoding.encode(text))
-            except KeyError:
-                warnings.warn(f"tiktoken encoding for {self.model_name} not found. Defaulting to general-purpose tokenizer.")
+#     def count_tokens(self, text: str) -> int:
+#         """주어진 텍스트의 토큰 수를 반환한다."""
+#         # 1. De Facto Standardization: Use tiktoken for OpenAI models
+#         if self.provider == 'openai':
+#             try:
+#                 encoding = tiktoken.encoding_for_model(self.model_name)
+#                 return len(encoding.encode(text))
+#             except KeyError:
+#                 warnings.warn(f"tiktoken encoding for {self.model_name} not found. Defaulting to general-purpose tokenizer.")
         
-        # 2. Delegation of Autonomy: Use user-specified tokenizer
-        if self.tokenizer_path:
-            tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_path)
-            return len(tokenizer.encode(text, add_special_tokens=False))
+#         # 2. Delegation of Autonomy: Use user-specified tokenizer
+#         if self.tokenizer_path:
+#             tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_path)
+#             return len(tokenizer.encode(text, add_special_tokens=False))
         
-        # 3. Fallback with clear warning
-        warnings.warn(f"BYOK provider '{self.provider}' is not OpenAI and no 'tokenizer_path' was provided. Falling back to default tokenizer.")
-        fallback_tokenizer = AutoTokenizer.from_pretrained("intfloat/multilingual-e5-base")
-        return len(fallback_tokenizer.encode(text, add_special_tokens=False))
+#         # 3. Fallback with clear warning
+#         warnings.warn(f"BYOK provider '{self.provider}' is not OpenAI and no 'tokenizer_path' was provided. Falling back to default tokenizer.")
+#         fallback_tokenizer = AutoTokenizer.from_pretrained("intfloat/multilingual-e5-base")
+#         return len(fallback_tokenizer.encode(text, add_special_tokens=False))
 
-    def chunk_text(self, text: str, max_tokens: int) -> str:
-        """주어진 텍스트를 최대 토큰 수만큼 정확히 잘라내서 반환한다."""
-        # 1. De Facto Standardization: Use tiktoken for OpenAI models
-        if self.provider == 'openai':
-            try:
-                encoding = tiktoken.encoding_for_model(self.model_name)
-                tokens = encoding.encode(text)
-                if len(tokens) > max_tokens:
-                    tokens = tokens[:max_tokens]
-                return encoding.decode(tokens)
-            except KeyError:
-                warnings.warn(f"tiktoken encoding for {self.model_name} not found. Defaulting to general-purpose tokenizer.")
+#     def chunk_text(self, text: str, max_tokens: int) -> str:
+#         """주어진 텍스트를 최대 토큰 수만큼 정확히 잘라내서 반환한다."""
+#         # 1. De Facto Standardization: Use tiktoken for OpenAI models
+#         if self.provider == 'openai':
+#             try:
+#                 encoding = tiktoken.encoding_for_model(self.model_name)
+#                 tokens = encoding.encode(text)
+#                 if len(tokens) > max_tokens:
+#                     tokens = tokens[:max_tokens]
+#                 return encoding.decode(tokens)
+#             except KeyError:
+#                 warnings.warn(f"tiktoken encoding for {self.model_name} not found. Defaulting to general-purpose tokenizer.")
         
-        # 2. Delegation of Autonomy: Use user-specified tokenizer
-        if self.tokenizer_path:
-            tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_path)
-            tokens = tokenizer.encode(text, add_special_tokens=False)
-            if len(tokens) > max_tokens:
-                tokens = tokens[:max_tokens]
-            return tokenizer.decode(tokens)
+#         # 2. Delegation of Autonomy: Use user-specified tokenizer
+#         if self.tokenizer_path:
+#             tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_path)
+#             tokens = tokenizer.encode(text, add_special_tokens=False)
+#             if len(tokens) > max_tokens:
+#                 tokens = tokens[:max_tokens]
+#             return tokenizer.decode(tokens)
         
-        # 3. Fallback with clear warning
-        warnings.warn(f"BYOK provider '{self.provider}' is not OpenAI and no 'tokenizer_path' was provided. Falling back to default tokenizer.")
-        fallback_tokenizer = AutoTokenizer.from_pretrained("intfloat/multilingual-e5-base")
-        tokens = fallback_tokenizer.encode(text, add_special_tokens=False)
-        if len(tokens) > max_tokens:
-            tokens = tokens[:max_tokens]
-        return fallback_tokenizer.decode(tokens)
+#         # 3. Fallback with clear warning
+#         warnings.warn(f"BYOK provider '{self.provider}' is not OpenAI and no 'tokenizer_path' was provided. Falling back to default tokenizer.")
+#         fallback_tokenizer = AutoTokenizer.from_pretrained("intfloat/multilingual-e5-base")
+#         tokens = fallback_tokenizer.encode(text, add_special_tokens=False)
+#         if len(tokens) > max_tokens:
+#             tokens = tokens[:max_tokens]
+#         return fallback_tokenizer.decode(tokens)
 
 class HuggingFaceSynthesizer(FinesseSynthesizer):
     """

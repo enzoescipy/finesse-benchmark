@@ -1,6 +1,6 @@
 [project]
 name = "finesse-benchmark"
-version = "0.18.0"
+version = "0.18.5"
 description = "sophisticated evaluation framework designed to assess the performance of long-context embedding models on semantic understanding and information retention"
 authors = [{ name = "winter.sci.dev", email = "enzoescipy@gmail.com" }]
 readme = "README.md"
@@ -17,7 +17,6 @@ dependencies = [
 
     # free-to-charge
     "seaborn~=0.13.0",
-    "litellm~=1.78.0",
     "matplotlib~=3.10.0",
     "tiktoken~=0.12.0",
 

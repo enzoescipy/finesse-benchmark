@@ -3,7 +3,7 @@ from .evaluator import FinesseEvaluator
 from .interfaces import FinesseEmbedder, FinesseSynthesizer
 from .implementations import (
     HuggingFaceEmbedder, 
-    ByokEmbedder, 
+    # ByokEmbedder, 
     HuggingFaceSynthesizer, 
     NullSynthesizer
 )

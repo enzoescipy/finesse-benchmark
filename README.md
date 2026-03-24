@@ -228,7 +228,8 @@ Hashes ensure reproducibility: Rerun `checksum` on shared results to confirm no 
 
 ## Using BYOK Mode (Bring Your Own Keys)
 
-BYOK mode integrates external embedding APIs (e.g., OpenAI, Cohere) via [LiteLLM](https://github.com/BerriAI/litellm) for fair comparison with open models.
+~~BYOK mode integrates external embedding APIs (e.g., OpenAI, Cohere) via [LiteLLM](https://github.com/BerriAI/litellm) for fair comparison with open models.~~
+**BYOK mode curruntly disrupted caused by litellm issue. Feature temporary disabled.**
 
 ### Setup
 1. Edit `benchmark.yaml`:
