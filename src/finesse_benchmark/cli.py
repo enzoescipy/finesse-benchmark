@@ -227,6 +227,8 @@ def generate_raw_data(
     num_lengths = len(length_results)
     typer.echo(f"Processed {num_lengths} sequence lengths with raw probe and synthesis embeddings.")
 
+    return save_path
+
 @app.command("score")
 def score_embeddings(
     pt_path: str = typer.Option(..., "--pt-path", help="Path to the raw .pt data file from the generate command"),

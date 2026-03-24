@@ -8,7 +8,7 @@ from .cli import generate_raw_data, score_embeddings
 
 def run_benchmark_from_config(
     config_path: str,
-    output_dir: str = "results",
+    output_dir: str,
     verbose: bool = True
 ) -> Dict[str, Any]:
     """
@@ -32,33 +32,16 @@ def run_benchmark_from_config(
     if not os.path.exists(config_path):
         raise ValueError(f"Config file not found: {config_path}")
     
-    with open(config_path, "r") as f:
-        yaml_data = yaml.safe_load(f)
-    
-    try:
-        config = BenchmarkConfig.model_validate(yaml_data)
-        if verbose:
-            print("Config validated.")
-    except Exception as e:
-        raise ValueError(f"Error validating config: {e}")
-    
-    # Compute expected pt_filename strictly from config (no overrides)
-    dataset_name = config.dataset.path.split('/')[-1] if '/' in config.dataset.path else config.dataset.path
-    pt_filename = f"embeddings_{config.mode}_{dataset_name}.pt"
-    pt_path = os.path.join(output_dir, pt_filename)
-    
     if verbose:
-        print(f"Step 1: Generating raw embeddings to {pt_filename}...")
+        print(f"Step 1: Generating raw embeddings ...")
     
     # Create output dir
     os.makedirs(output_dir, exist_ok=True)
     
     # Call generate_raw_data with NO overrides - force config adherence
-    generate_raw_data(
+    pt_path = generate_raw_data(
         config_path=config_path,
-        dataset_path=None,      # No override
         output_dir=output_dir,
-        num_seed=None,          # No override
     )
     
     if not os.path.exists(pt_path):
@@ -78,16 +61,10 @@ def run_benchmark_from_config(
     if not os.path.exists(json_path):
         raise ValueError(f"Results .json not found at {json_path}. Check scoring step.")
     
-    with open(json_path, 'r', encoding='utf-8') as f:
-        results_data = json.load(f)
-    
-    avg_rss = results_data['average_rss']
-    
     if verbose:
-        print(f"Pipeline completed! Average RSS: {avg_rss}")
+        print(f"Pipeline completed")
     
     return {
         'pt_path': pt_path,
         'json_path': json_path,
-        'average_rss': avg_rss
     }
