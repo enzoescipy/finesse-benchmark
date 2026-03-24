@@ -1024,6 +1024,9 @@ def _calculate_rss_scores(length_results: Dict[int, Any], mode: str, eval_mode: 
         sample_scores = []
         total_latency_list = []
         synthesis_latency_list = []
+
+        sample_tds = []
+        sample_bus = []
         
         for sample_dict in sample_results:
             probe_embeddings = sample_dict.get('chunk_embeddings')
@@ -1037,9 +1040,12 @@ def _calculate_rss_scores(length_results: Dict[int, Any], mode: str, eval_mode: 
                 avg_bu = bu_scores['bottom_up_coherence']
                 final_score = avg_td + avg_bu
                 sample_scores.append(final_score)
+                sample_tds.append(avg_td)
+                sample_bus.append(avg_bu)
             else:
                 sample_scores.append(0.0)
-            
+                sample_tds.append(0.0)
+                sample_bus.append(0.0)
             # Calculate latencies for this sample
             chunk_times = sample_dict.get('chunk_times', None)
             synth_times = sample_dict.get('synth_times', [])
@@ -1064,7 +1070,9 @@ def _calculate_rss_scores(length_results: Dict[int, Any], mode: str, eval_mode: 
         length_scores[target_length] = {
             'rss_scores': scaled_rss,
             'total_latency_scores': scaled_total,  # ms, cold start
-            'synthesis_latency_scores': scaled_synth  # ms, warm start
+            'synthesis_latency_scores': scaled_synth,  # ms, warm start
+            'raw_td': td_scores,
+            'raw_bu': bu_scores
         }
         all_individual_scores.extend(scaled_rss)
         all_total_latencies.extend(scaled_total)
