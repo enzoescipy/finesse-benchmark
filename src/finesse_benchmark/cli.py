@@ -1072,8 +1072,8 @@ def _calculate_rss_scores(length_results: Dict[int, Any], mode: str, eval_mode: 
             'rss_scores': scaled_rss,
             'total_latency_scores': scaled_total,  # ms, cold start
             'synthesis_latency_scores': scaled_synth,  # ms, warm start
-            'raw_td': td_scores,
-            'raw_bu': bu_scores
+            'raw_td': sample_tds,
+            'raw_bu': sample_bus
         }
         all_individual_scores.extend(scaled_rss)
         all_total_latencies.extend(scaled_total)
